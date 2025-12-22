@@ -17,7 +17,9 @@ import {
 // 协议端口映射表
 const PROTOCOL_PORT_MAP = {
   'ws': { port: 8083, description: 'WebSocket 未加密' },
-  'wss': { port: 8084, description: 'WebSocket SSL 加密' }
+  'wss': { port: 8084, description: 'WebSocket SSL 加密' },
+  'mqtt': { port: 1883, description: 'MQTT TCP' },
+  'mqtts': { port: 8883, description: 'MQTT TLS' }
 };
 
 // 常用 MQTT 服务器预设
@@ -51,6 +53,16 @@ try {
 }
 
 export default function MqttDebugger() {
+  const isElectron =
+    typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string' && navigator.userAgent.includes('Electron');
+  const isFileProtocol =
+    typeof window !== 'undefined' && typeof window.location?.protocol === 'string' && window.location.protocol === 'file:';
+  const isDesktopShell =
+    typeof window !== 'undefined' && (window.__MQTT_PRO_DESKTOP__ === true || isElectron || isFileProtocol);
+  const mqttSource = typeof window !== 'undefined' ? window.__MQTT_PRO_MQTT_SOURCE__ : undefined;
+  const isDesktopTcpCapable =
+    typeof window !== 'undefined' && isDesktopShell && mqttSource === 'native' && typeof window.mqtt?.connect === 'function';
+
   // --- 用户与云同步状态 ---
   const [user, setUser] = useState(null);
   const [syncSpaceId, setSyncSpaceId] = useState(''); 
@@ -68,26 +80,32 @@ export default function MqttDebugger() {
   const [connectStatus, setConnectStatus] = useState('disconnected');
   const [sdkReady, setSdkReady] = useState(false);
   const [connectDuration, setConnectDuration] = useState(0);
+  const [reconnectCount, setReconnectCount] = useState(0); // 新增：重连计数
   
   // --- 数据状态 ---
   const [savedConfigs, setSavedConfigs] = useState([]);
   const [quickActions, setQuickActions] = useState([]);
 
   // --- 编辑/运行状态 ---
-  const [connection, setConnection] = useState({
-    name: '默认 EMQX 公共服', 
-    protocol: 'wss',
-    host: 'broker.emqx.io',
-    port: 8084,
-    path: '/mqtt',
-    clientId: `mqtt_debugger_${Math.random().toString(16).substr(2, 8)}`,
-    username: '',
-    password: ''
+  const [connection, setConnection] = useState(() => {
+    const defaultProtocol = isDesktopTcpCapable ? 'mqtt' : 'wss';
+    const defaultPort = PROTOCOL_PORT_MAP[defaultProtocol]?.port ?? 8084;
+    return {
+      name: '默认 EMQX 公共服',
+      protocol: defaultProtocol,
+      host: 'broker.emqx.io',
+      port: defaultPort,
+      path: '/mqtt',
+      clientId: `mqtt_debugger_${Math.random().toString(16).substr(2, 8)}`,
+      username: '',
+      password: ''
+    };
   });
 
   const [advancedConfig, setAdvancedConfig] = useState({
     keepalive: 60, clean: true, willEnabled: false,
-    willTopic: 'last/will', willPayload: 'offline', willQos: 0, willRetain: false
+    willTopic: 'last/will', willPayload: 'offline', willQos: 0, willRetain: false,
+    protocolVersion: 4  // 新增：协议版本 (3=MQTT 3.1, 4=MQTT 3.1.1, 5=MQTT 5.0)
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [configCollapsed, setConfigCollapsed] = useState(false); // 新增：连接后折叠配置面板
@@ -187,15 +205,71 @@ export default function MqttDebugger() {
 
   // --- 初始化逻辑 ---
   useEffect(() => {
-    if (window.mqtt) { setSdkReady(true); } 
-    else {
+    // 延迟检查，确保preload已完成
+    const checkMqtt = () => {
+      if (window.mqtt) {
+        const source = window.__MQTT_PRO_MQTT_SOURCE__ || 'unknown';
+        const isNative = source === 'native';
+
+        console.log('[App] 检测到 window.mqtt');
+        console.log('[App] MQTT来源:', source, isNative ? '(Node原生版，支持TCP)' : '(CDN浏览器版，仅支持WebSocket)');
+
+        if (isNative) {
+          console.log('[App] ✅ 使用Node原生MQTT，支持 mqtt:// 协议');
+        } else {
+          console.log('[App] ⚠️  使用CDN版本MQTT，仅支持 ws:// 和 wss:// 协议');
+        }
+
+        setSdkReady(true);
+        return true;
+      }
+      return false;
+    };
+
+    // 立即检查一次
+    if (checkMqtt()) {
+      return;
+    }
+
+    // 如果是桌面环境但mqtt还没加载，等待一下
+    if (isDesktopShell) {
+      console.log('[App] 桌面环境，等待preload注入mqtt...');
+
+      // 等待最多1秒让preload完成
+      const waitTimer = setTimeout(() => {
+        if (checkMqtt()) {
+          console.log('[App] ✅ Preload mqtt加载成功');
+          return;
+        }
+
+        console.warn('[App] ⚠️  Preload超时，降级使用CDN版本（不支持mqtt://协议）');
+        loadCdnMqtt();
+      }, 1000);
+
+      return () => clearTimeout(waitTimer);
+    }
+
+    // 浏览器环境，直接加载CDN版本
+    console.log('[App] 浏览器环境，加载CDN版本MQTT');
+    loadCdnMqtt();
+
+    function loadCdnMqtt() {
+      console.log('[App] 加载 CDN 版本 MQTT 库（仅支持WebSocket）');
       const script = document.createElement('script');
       script.src = "https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js";
       script.async = true;
-      script.onload = () => setSdkReady(true);
+      script.onload = () => {
+        console.log('[App] CDN MQTT SDK 加载成功');
+        if (window.__MQTT_PRO_MQTT_SOURCE__ !== 'native') window.__MQTT_PRO_MQTT_SOURCE__ = 'cdn';
+        setSdkReady(true);
+      };
+      script.onerror = (e) => {
+        console.error('[App] MQTT SDK 加载失败:', e);
+        alert('MQTT 库加载失败，请检查网络连接或使用离线版本');
+      };
       document.body.appendChild(script);
     }
-  }, []);
+  }, [isDesktopShell]);
 
   useEffect(() => {
     if (isFirebaseAvailable && auth) {
@@ -387,6 +461,32 @@ export default function MqttDebugger() {
     }));
   };
 
+  const handlePortChange = (rawPort) => {
+    const port = Number(rawPort);
+    if (!Number.isFinite(port)) return;
+
+    if (isDesktopShell && port === 1883 && (connection.protocol === 'ws' || connection.protocol === 'wss')) {
+      return handleProtocolChange('mqtt');
+    }
+    if (isDesktopShell && port === 8883 && (connection.protocol === 'ws' || connection.protocol === 'wss')) {
+      return handleProtocolChange('mqtts');
+    }
+
+    setConnection(prev => ({ ...prev, port }));
+  };
+
+  useEffect(() => {
+    if (!isDesktopShell) return;
+    const port = Number(connection.port);
+    if (!Number.isFinite(port)) return;
+
+    if ((connection.protocol === 'ws' || connection.protocol === 'wss') && port === 1883) {
+      handleProtocolChange('mqtt');
+    } else if ((connection.protocol === 'ws' || connection.protocol === 'wss') && port === 8883) {
+      handleProtocolChange('mqtts');
+    }
+  }, [isDesktopShell, connection.port, connection.protocol]);
+
   // 解析消息模板变量
   const parseMessageTemplate = (message) => {
     msgCountRef.current++;
@@ -401,20 +501,32 @@ export default function MqttDebugger() {
   // 诊断连接问题
   const diagnoseConnectionError = (err, url) => {
     const errorMsg = err.message || err.toString();
+    const errorCode = err.code;
     let diagnosis = '';
 
-    if (errorMsg.includes('WebSocket') || errorMsg.includes('ws')) {
+    // 根据错误代码进行诊断
+    if (errorCode === 'ECONNREFUSED') {
+      diagnosis = '💡 诊断: 连接被拒绝\n   - 服务器可能未运行\n   - 端口号可能错误\n   - 防火墙可能阻止了连接';
+    } else if (errorCode === 'ETIMEDOUT' || errorCode === 'ESOCKETTIMEDOUT') {
+      diagnosis = '💡 诊断: 连接超时\n   - 服务器地址可能不可达\n   - 网络问题或防火墙阻止\n   - 服务器响应太慢';
+    } else if (errorCode === 'ENOTFOUND' || errorCode === 'EAI_AGAIN') {
+      diagnosis = '💡 诊断: 域名解析失败\n   - 服务器地址拼写错误\n   - DNS 服务器问题\n   - 网络连接问题';
+    } else if (errorCode === 'ECONNRESET') {
+      diagnosis = '💡 诊断: 连接被重置\n   - 服务器主动断开了连接\n   - 可能是认证失败\n   - 可能是协议版本不匹配';
+    } else if (errorMsg.includes('WebSocket')) {
       if (connection.protocol === 'wss') {
-        diagnosis = '💡 提示: 服务器可能不支持 SSL，尝试使用 ws:// 协议';
+        diagnosis = '💡 诊断: WebSocket SSL 连接失败\n   - 服务器可能不支持 WSS\n   - 尝试使用 ws:// 协议';
       } else {
-        diagnosis = '💡 提示: WebSocket 连接失败，检查服务器是否支持 WebSocket';
+        diagnosis = '💡 诊断: WebSocket 连接失败\n   - 检查服务器是否支持 WebSocket\n   - 检查路径(path)是否正确';
       }
     } else if (errorMsg.includes('timeout') || errorMsg.includes('TIMEOUT')) {
-      diagnosis = '💡 提示: 连接超时，检查服务器地址和端口是否正确';
-    } else if (errorMsg.includes('refused') || errorMsg.includes('ECONNREFUSED')) {
-      diagnosis = '💡 提示: 连接被拒绝，确认服务器正在运行且端口正确';
+      diagnosis = '💡 诊断: 连接超时\n   - 检查服务器地址和端口\n   - 检查网络连接\n   - 检查防火墙设置';
     } else if (errorMsg.includes('certificate') || errorMsg.includes('SSL') || errorMsg.includes('TLS')) {
-      diagnosis = '💡 提示: SSL 证书问题，如果是自签名证书，尝试使用 ws:// 协议';
+      diagnosis = '💡 诊断: SSL/TLS 证书问题\n   - 自签名证书不被信任\n   - 尝试使用非加密协议 (mqtt:// 或 ws://)';
+    } else if (errorMsg.includes('authorized') || errorMsg.includes('authentication')) {
+      diagnosis = '💡 诊断: 认证失败\n   - 用户名或密码错误\n   - 服务器要求认证但未提供凭据';
+    } else if (errorMsg.includes('protocol')) {
+      diagnosis = '💡 诊断: 协议错误\n   - MQTT 协议版本不匹配\n   - 服务器可能不是标准 MQTT 服务器';
     }
 
     return diagnosis;
@@ -427,29 +539,85 @@ export default function MqttDebugger() {
 
   const handleConnect = () => {
     if (!sdkReady) return addLog('error', '', 'SDK 未加载');
+    if (!isDesktopShell && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
+      return addLog('error', '', '浏览器不支持 mqtt://（1883）直连，请使用 ws/wss 或使用桌面版');
+    }
+    if ((connection.protocol === 'mqtt' || connection.protocol === 'mqtts') && !isDesktopTcpCapable) {
+      addLog('error', '', '桌面端未启用 MQTT TCP（preload 未生效），请使用安装包运行桌面版或检查 Electron preload 配置');
+      if (window.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__) {
+        addLog('system', '', `Preload 错误: ${window.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__}`);
+      }
+      return;
+    }
+    if (
+      isDesktopShell &&
+      (connection.protocol === 'ws' || connection.protocol === 'wss') &&
+      (Number(connection.port) === 1883 || Number(connection.port) === 8883)
+    ) {
+      return addLog('error', '', '你正在用 ws/wss 连接 1883/8883（这是 MQTT TCP/TLS 端口，不是 WebSocket 端口），请切换协议为 mqtt/mqtts');
+    }
     if (client) { client.end(); setClient(null); }
     setConnectStatus('connecting');
-    const url = `${connection.protocol}://${connection.host}:${connection.port}${connection.path}`;
+    const pathPart = (connection.protocol === 'ws' || connection.protocol === 'wss') ? connection.path : '';
+    const url = `${connection.protocol}://${connection.host}:${connection.port}${pathPart}`;
     addLog('system', '', `正在连接 ${url}...`);
+
+    // 添加调试信息
+    addLog('system', '', `环境检测: ${isDesktopShell ? '桌面客户端' : '浏览器'}`);
+    addLog('system', '', `TCP支持: ${isDesktopTcpCapable ? '是' : '否'}`);
+    addLog('system', '', `MQTT模块: ${window.mqtt ? '已加载' : '未加载'}`);
+
+    // 检测 MQTT 库的类型
+    if (window.mqtt) {
+      const source = window.__MQTT_PRO_MQTT_SOURCE__ || 'unknown';
+      const isNative = source === 'native';
+
+      addLog('system', '', `MQTT来源: ${source === 'native' ? 'Node原生(支持TCP)' : source === 'cdn' ? 'CDN浏览器版(仅WebSocket)' : '未知'}`);
+      addLog('system', '', `MQTT版本: ${window.__MQTT_PRO_MQTT_VERSION__ || 'unknown'}`);
+
+      if (!isNative && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
+        addLog('error', '', '⚠️  当前使用的MQTT库不支持 mqtt:// 协议');
+        addLog('error', '', '请切换到 ws:// / wss://，或检查桌面端 preload 注入是否成功');
+        setConnectStatus('disconnected');
+        setReconnectCount(0);
+        return;
+      }
+    }
+
+    addLog('system', '', `认证: 用户名=${connection.username || '无'}`);
+
 
     // 协议提示
     if (connection.protocol === 'wss') {
       addLog('system', '', '使用 WSS 加密连接，如服务器无 SSL 请改用 ws://');
+    } else if (connection.protocol === 'mqtts') {
+      addLog('system', '', '使用 MQTT TLS 连接（mqtts://），如服务器无证书请改用 mqtt:// 或 ws://');
     }
 
     try {
       const opts = {
-        clientId: connection.clientId, username: connection.username, password: connection.password,
-        clean: advancedConfig.clean, keepalive: Number(advancedConfig.keepalive),
-        connectTimeout: 4000, reconnectPeriod: 1000, protocolId: 'MQTT', protocolVersion: 4
+        clientId: connection.clientId,
+        username: connection.username,
+        password: connection.password,
+        clean: advancedConfig.clean,
+        keepalive: Number(advancedConfig.keepalive),
+        connectTimeout: 10000,      // 增加到10秒
+        reconnectPeriod: 3000,      // 增加到3秒，避免频繁重连
+        protocolId: advancedConfig.protocolVersion === 3 ? 'MQIsdp' : 'MQTT',
+        protocolVersion: Number(advancedConfig.protocolVersion)
       };
       if (advancedConfig.willEnabled) opts.will = { topic: advancedConfig.willTopic, payload: advancedConfig.willPayload, qos: Number(advancedConfig.willQos), retain: advancedConfig.willRetain };
 
+      addLog('system', '', `连接选项: timeout=${opts.connectTimeout}ms, reconnect=${opts.reconnectPeriod}ms, protocol=${opts.protocolId} v${opts.protocolVersion}`);
+
       const newClient = window.mqtt.connect(url, opts);
 
-      newClient.on('connect', () => {
+      // 连接建立事件
+      newClient.on('connect', (connack) => {
         setConnectStatus('connected');
-        addLog('system', '', '连接成功');
+        setReconnectCount(0); // 重置重连计数
+        addLog('system', '', '✅ 连接成功');
+        addLog('system', '', `CONNACK 响应: sessionPresent=${connack?.sessionPresent}, returnCode=${connack?.returnCode || 0}`);
         setConfigCollapsed(true);
 
         // 自动重订阅
@@ -467,25 +635,101 @@ export default function MqttDebugger() {
         }
       });
 
+      // 错误事件
       newClient.on('error', (err) => {
         setConnectStatus('error');
-        addLog('error', '', `连接错误: ${err.message}`);
+        const errorMsg = err.message || err.toString();
+        addLog('error', '', `❌ 连接错误: ${errorMsg}`);
+
+        // 详细错误信息
+        const errorDetails = {
+          message: err.message,
+          code: err.code,
+          errno: err.errno,
+          syscall: err.syscall,
+          address: err.address,
+          port: err.port,
+          stack: err.stack?.split('\n').slice(0, 3).join('\n')
+        };
+
+        // 过滤掉undefined的字段
+        const filteredDetails = Object.fromEntries(
+          Object.entries(errorDetails).filter(([_, v]) => v != null)
+        );
+
+        if (Object.keys(filteredDetails).length > 1) {
+          addLog('system', '', `错误详情: ${JSON.stringify(filteredDetails, null, 2)}`);
+        }
+
         const diagnosis = diagnoseConnectionError(err, url);
         if (diagnosis) addLog('system', '', diagnosis);
       });
 
+      // 连接关闭事件
       newClient.on('close', () => {
-        if (connectStatus === 'connected') {
-          addLog('system', '', '连接已断开');
+        const wasConnected = connectStatus === 'connected';
+        setConnectStatus('disconnected');
+        if (wasConnected) {
+          addLog('system', '', '⚠️ 连接已断开');
+        } else {
+          addLog('system', '', '⚠️ 连接关闭（未成功建立连接）');
+          if (reconnectCount === 0) {
+            addLog('error', '', '⚠️ TCP连接成功但MQTT握手失败，可能原因：');
+            addLog('error', '', '  1. 用户名或密码错误（最常见）');
+            addLog('error', '', '  2. ClientID 被拒绝或已被占用');
+            addLog('error', '', '  3. 服务器配置不允许此连接');
+            addLog('error', '', '  4. MQTT 协议版本不匹配');
+          }
         }
       });
 
+      // 离线事件
       newClient.on('offline', () => {
-        addLog('system', '', '客户端离线');
+        addLog('system', '', '📴 客户端离线 - 可能是网络问题或服务器无法访问');
+        if (reconnectCount === 0) {
+          addLog('system', '', '💡 提示: 检查服务器地址、端口、网络连接');
+        }
       });
 
+      // 重连事件
       newClient.on('reconnect', () => {
-        addLog('system', '', '正在尝试重连...');
+        setReconnectCount(prev => {
+          const newCount = prev + 1;
+          addLog('system', '', `🔄 正在尝试第 ${newCount} 次重连...`);
+
+          if (newCount === 3) {
+            addLog('error', '', '⚠️ 已重连3次失败，可能原因：');
+            addLog('error', '', '  1. 服务器地址或端口错误');
+            addLog('error', '', '  2. 服务器未运行或无法访问');
+            addLog('error', '', '  3. 防火墙阻止连接');
+            addLog('error', '', '  4. 用户名密码错误');
+          }
+
+          if (newCount >= 10) {
+            addLog('error', '', `🛑 已重连 ${newCount} 次，建议停止连接并检查配置`);
+            // 10次后停止自动重连
+            if (newCount >= 15) {
+              addLog('error', '', '🛑 达到最大重连次数(15)，停止重连');
+              newClient.end(true);
+            }
+          }
+
+          return newCount;
+        });
+      });
+
+      // 包发送事件（用于调试）
+      newClient.on('packetsend', (packet) => {
+        if (reconnectCount === 0) {
+          addLog('system', '', `📤 发送数据包: ${packet.cmd}`);
+        }
+      });
+
+      // 包接收事件（用于调试）
+      newClient.on('packetreceive', (packet) => {
+        if (reconnectCount === 0) {
+          addLog('system', '', `📥 接收数据包: ${packet.cmd}`);
+        }
       });
 
       newClient.on('message', (t, m) => addLog('received', t, m.toString()));
@@ -510,11 +754,13 @@ export default function MqttDebugger() {
       setTimerEnabled(false);
     }
     if (client) {
-      client.end();
+      // 强制结束连接，传入true表示不再重连
+      client.end(true);
       setClient(null);
       setConnectStatus('disconnected');
       setSubscriptions([]);
-      addLog('system', '', '已断开');
+      setReconnectCount(0); // 重置重连计数
+      addLog('system', '', '✅ 已断开连接（停止重连）');
     }
   };
 
@@ -773,6 +1019,9 @@ export default function MqttDebugger() {
             {connectStatus === 'connected' && (
               <p className="text-xs text-slate-500 truncate">{connection.host}:{connection.port}</p>
             )}
+            {reconnectCount > 0 && connectStatus !== 'connected' && (
+              <p className="text-xs text-amber-500 mt-2">🔄 重连次数: {reconnectCount}</p>
+            )}
           </div>
         </div>
 
@@ -827,10 +1076,12 @@ export default function MqttDebugger() {
                 <input type="text" value={connection.host} onChange={(e) => setConnection({...connection, host: e.target.value})} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Host (e.g. broker.emqx.io)"/>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <input type="number" value={connection.port} onChange={(e) => setConnection({...connection, port: Number(e.target.value)})} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Port"/>
+                  <input type="number" value={connection.port} onChange={(e) => handlePortChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Port"/>
                   <select value={connection.protocol} onChange={(e) => handleProtocolChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}>
                     <option value="ws">ws://</option>
                     <option value="wss">wss://</option>
+                    <option value="mqtt" disabled={!isDesktopShell}>mqtt://{isDesktopShell ? '' : '（桌面端）'}</option>
+                    <option value="mqtts" disabled={!isDesktopShell}>mqtts://{isDesktopShell ? '' : '（桌面端）'}</option>
                   </select>
                 </div>
 
@@ -840,7 +1091,16 @@ export default function MqttDebugger() {
                   </div>
                 )}
 
-                <input type="text" value={connection.path} onChange={(e) => setConnection({...connection, path: e.target.value})} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Path (e.g. /mqtt)"/>
+                {(connection.protocol === 'ws' || connection.protocol === 'wss') && (
+                  <input
+                    type="text"
+                    value={connection.path}
+                    onChange={(e) => setConnection({...connection, path: e.target.value})}
+                    disabled={connectStatus === 'connected'}
+                    className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}
+                    placeholder="Path（仅 ws/wss 使用，例如 /mqtt）"
+                  />
+                )}
 
                 <div className="grid grid-cols-2 gap-2">
                   <input type="text" value={connection.username} onChange={(e) => setConnection({...connection, username: e.target.value})} disabled={connectStatus === 'connected'} placeholder="用户名" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
@@ -855,15 +1115,23 @@ export default function MqttDebugger() {
                   <div className={`p-3 ${t.bgTertiary} rounded-lg border ${t.borderLight} space-y-2`}>
                     <div className="flex gap-2">
                       <div className="flex-1">
-                        <label className={`text-[10px] ${t.textMuted} block mb-1`}>Keep Alive</label>
+                        <label className={`text-[10px] ${t.textMuted} block mb-1`}>Keep Alive (秒)</label>
                         <input type="number" value={advancedConfig.keepalive} onChange={(e) => setAdvancedConfig({...advancedConfig, keepalive: e.target.value})} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-2 py-1 text-xs ${t.text}`}/>
                       </div>
-                      <div className="flex items-end pb-1">
-                        <label className="flex items-center gap-1 cursor-pointer">
-                          <input type="checkbox" checked={advancedConfig.clean} onChange={(e) => setAdvancedConfig({...advancedConfig, clean: e.target.checked})} className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-indigo-600"/>
-                          <span className={`text-xs ${t.textSecondary}`}>Clean Session</span>
-                        </label>
+                      <div className="flex-1">
+                        <label className={`text-[10px] ${t.textMuted} block mb-1`}>协议版本</label>
+                        <select value={advancedConfig.protocolVersion} onChange={(e) => setAdvancedConfig({...advancedConfig, protocolVersion: Number(e.target.value)})} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-2 py-1 text-xs ${t.text}`}>
+                          <option value={3}>MQTT 3.1</option>
+                          <option value={4}>MQTT 3.1.1</option>
+                          <option value={5}>MQTT 5.0</option>
+                        </select>
                       </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="checkbox" checked={advancedConfig.clean} onChange={(e) => setAdvancedConfig({...advancedConfig, clean: e.target.checked})} className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-indigo-600"/>
+                        <span className={`text-xs ${t.textSecondary}`}>Clean Session</span>
+                      </label>
                     </div>
                     <div className={`flex items-center gap-2 pt-2 border-t ${t.borderLight}`}>
                       <label className="flex items-center gap-1 cursor-pointer">
@@ -876,15 +1144,26 @@ export default function MqttDebugger() {
 
                 <button
                   onClick={connectStatus !== 'connected' ? handleConnect : handleDisconnect}
-                  disabled={connectStatus === 'connecting' || !sdkReady}
+                  disabled={connectStatus === 'connecting' && reconnectCount === 0 || !sdkReady}
                   className={`w-full text-white py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all text-sm ${
                     connectStatus !== 'connected'
-                      ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/20'
+                      ? reconnectCount > 0
+                        ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-500/20'
+                        : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/20'
                       : 'bg-rose-600 hover:bg-rose-500 shadow-rose-500/20'
                   } disabled:opacity-50`}
                 >
-                  {connectStatus !== 'connected' ? (!sdkReady ? <Loader2 className="w-4 h-4 animate-spin"/> : <Play className="w-4 h-4 fill-current"/>) : <Square className="w-4 h-4 fill-current"/>}
-                  {connectStatus !== 'connected' ? (sdkReady ? '连接' : 'Loading...') : '断开连接'}
+                  {connectStatus !== 'connected' ? (
+                    !sdkReady ? (
+                      <><Loader2 className="w-4 h-4 animate-spin"/> Loading...</>
+                    ) : reconnectCount > 0 ? (
+                      <><Square className="w-4 h-4 fill-current"/> 停止重连 ({reconnectCount})</>
+                    ) : (
+                      <><Play className="w-4 h-4 fill-current"/> 连接</>
+                    )
+                  ) : (
+                    <><Square className="w-4 h-4 fill-current"/> 断开连接</>
+                  )}
                 </button>
               </div>
             )}
