@@ -53,15 +53,26 @@ try {
 }
 
 export default function MqttDebugger() {
-  const isElectron =
-    typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string' && navigator.userAgent.includes('Electron');
-  const isFileProtocol =
-    typeof window !== 'undefined' && typeof window.location?.protocol === 'string' && window.location.protocol === 'file:';
-  const isDesktopShell =
-    typeof window !== 'undefined' && (window.__MQTT_PRO_DESKTOP__ === true || isElectron || isFileProtocol);
+  const isElectronRuntime =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.userAgent === 'string' &&
+    navigator.userAgent.includes('Electron');
+  const hasPreload =
+    typeof window !== 'undefined' && window.__MQTT_PRO_DESKTOP__ === true;
+  const isDesktopShell = typeof window !== 'undefined' && (hasPreload || isElectronRuntime);
   const mqttSource = typeof window !== 'undefined' ? window.__MQTT_PRO_MQTT_SOURCE__ : undefined;
-  const isDesktopTcpCapable =
-    typeof window !== 'undefined' && isDesktopShell && mqttSource === 'native' && typeof window.mqtt?.connect === 'function';
+
+  const getDesktopTcpCapable = () => {
+    if (typeof window === 'undefined') return false;
+    const sourceNow = window.__MQTT_PRO_MQTT_SOURCE__;
+    const preloadOk = window.__MQTT_PRO_DESKTOP__ === true;
+    return (
+      isElectronRuntime &&
+      preloadOk &&
+      sourceNow === 'native' &&
+      typeof window.mqtt?.connect === 'function'
+    );
+  };
 
   // --- 用户与云同步状态 ---
   const [user, setUser] = useState(null);
@@ -88,7 +99,7 @@ export default function MqttDebugger() {
 
   // --- 编辑/运行状态 ---
   const [connection, setConnection] = useState(() => {
-    const defaultProtocol = isDesktopTcpCapable ? 'mqtt' : 'wss';
+    const defaultProtocol = (typeof window !== 'undefined' && getDesktopTcpCapable()) ? 'mqtt' : 'wss';
     const defaultPort = PROTOCOL_PORT_MAP[defaultProtocol]?.port ?? 8084;
     return {
       name: '默认 EMQX 公共服',
@@ -231,9 +242,9 @@ export default function MqttDebugger() {
       return;
     }
 
-    // 如果是桌面环境但mqtt还没加载，等待一下
-    if (isDesktopShell) {
-      console.log('[App] 桌面环境，等待preload注入mqtt...');
+    // Electron 环境但 mqtt 还没加载：等待 preload 注入（或降级为 CDN 版本，仅支持 ws/wss）
+    if (isElectronRuntime) {
+      console.log('[App] Electron 环境，等待 preload 注入 mqtt...');
 
       // 等待最多1秒让preload完成
       const waitTimer = setTimeout(() => {
@@ -243,6 +254,10 @@ export default function MqttDebugger() {
         }
 
         console.warn('[App] ⚠️  Preload超时，降级使用CDN版本（不支持mqtt://协议）');
+        if (window.__MQTT_PRO_DESKTOP__ !== true && !window.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__) {
+          const mainInfo = window.__MQTT_PRO_MAIN_INFO__ ? ` main=${JSON.stringify(window.__MQTT_PRO_MAIN_INFO__)}` : '';
+          window.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__ = `preload 未检测到（可能运行了旧版本/未正确安装/主进程未配置 preload）${mainInfo}`;
+        }
         loadCdnMqtt();
       }, 1000);
 
@@ -269,7 +284,7 @@ export default function MqttDebugger() {
       };
       document.body.appendChild(script);
     }
-  }, [isDesktopShell]);
+  }, [isElectronRuntime]);
 
   useEffect(() => {
     if (isFirebaseAvailable && auth) {
@@ -539,13 +554,22 @@ export default function MqttDebugger() {
 
   const handleConnect = () => {
     if (!sdkReady) return addLog('error', '', 'SDK 未加载');
-    if (!isDesktopShell && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
+    if (!isElectronRuntime && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
       return addLog('error', '', '浏览器不支持 mqtt://（1883）直连，请使用 ws/wss 或使用桌面版');
     }
-    if ((connection.protocol === 'mqtt' || connection.protocol === 'mqtts') && !isDesktopTcpCapable) {
+    const tcpCapableNow = getDesktopTcpCapable();
+    if ((connection.protocol === 'mqtt' || connection.protocol === 'mqtts') && !tcpCapableNow) {
+      const sourceNow = window.__MQTT_PRO_MQTT_SOURCE__ || 'unknown';
       addLog('error', '', '桌面端未启用 MQTT TCP（preload 未生效），请使用安装包运行桌面版或检查 Electron preload 配置');
+      addLog('system', '', `诊断: isElectron=${isElectronRuntime ? '是' : '否'}, preload=${window.__MQTT_PRO_DESKTOP__ === true ? '是' : '否'}, mqttSource=${sourceNow}, mqtt.connect=${typeof window.mqtt?.connect}`);
+      if (window.__MQTT_PRO_MAIN_INFO__) {
+        addLog('system', '', `主进程: ${JSON.stringify(window.__MQTT_PRO_MAIN_INFO__)}`);
+      }
       if (window.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__) {
         addLog('system', '', `Preload 错误: ${window.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__}`);
+      }
+      if (window.__MQTT_PRO_MQTT_REQUIRE_TRIED__) {
+        addLog('system', '', `Preload require: ${JSON.stringify(window.__MQTT_PRO_MQTT_REQUIRE_TRIED__)}`);
       }
       return;
     }
@@ -564,8 +588,14 @@ export default function MqttDebugger() {
 
     // 添加调试信息
     addLog('system', '', `环境检测: ${isDesktopShell ? '桌面客户端' : '浏览器'}`);
-    addLog('system', '', `TCP支持: ${isDesktopTcpCapable ? '是' : '否'}`);
+    addLog('system', '', `TCP支持: ${getDesktopTcpCapable() ? '是' : '否'}`);
     addLog('system', '', `MQTT模块: ${window.mqtt ? '已加载' : '未加载'}`);
+    if (isDesktopShell) {
+      addLog('system', '', `应用版本: ${window.__MQTT_PRO_APP_VERSION__ || 'unknown'}`);
+      if (window.__MQTT_PRO_PRELOAD_DIR__) addLog('system', '', `Preload目录: ${window.__MQTT_PRO_PRELOAD_DIR__}`);
+      if (window.__MQTT_PRO_CWD__) addLog('system', '', `CWD: ${window.__MQTT_PRO_CWD__}`);
+      if (window.__MQTT_PRO_MQTT_RESOLVE_PATH__ !== undefined) addLog('system', '', `MQTT resolve: ${window.__MQTT_PRO_MQTT_RESOLVE_PATH__}`);
+    }
 
     // 检测 MQTT 库的类型
     if (window.mqtt) {
@@ -1080,8 +1110,8 @@ export default function MqttDebugger() {
                   <select value={connection.protocol} onChange={(e) => handleProtocolChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}>
                     <option value="ws">ws://</option>
                     <option value="wss">wss://</option>
-                    <option value="mqtt" disabled={!isDesktopShell}>mqtt://{isDesktopShell ? '' : '（桌面端）'}</option>
-                    <option value="mqtts" disabled={!isDesktopShell}>mqtts://{isDesktopShell ? '' : '（桌面端）'}</option>
+                    <option value="mqtt" disabled={!isElectronRuntime}>mqtt://{isElectronRuntime ? '' : '（桌面端）'}</option>
+                    <option value="mqtts" disabled={!isElectronRuntime}>mqtts://{isElectronRuntime ? '' : '（桌面端）'}</option>
                   </select>
                 </div>
 

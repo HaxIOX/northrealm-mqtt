@@ -2,10 +2,40 @@
 
 一款现代化的 MQTT WebSocket 调试工具，支持云同步、主题切换、消息模板等高级功能。
 
+## 桌面版（Windows）与 1883/8883 支持
+
+本项目同时支持：
+- **Web 版（浏览器）**：仅支持 `ws://` / `wss://`（WebSocket）连接 MQTT Broker
+- **桌面版（Electron/Windows）**：在保留 `ws/wss` 的同时，新增支持 `mqtt://`（1883）与 `mqtts://`（8883）直连
+
+原因说明：浏览器环境无法直接建立 TCP Socket，因此 **无法直连 1883/8883**；要么使用 Broker 提供的 WebSocket 端口（如 8083/8084），要么使用桌面端（Node 能力）。
+
+### 桌面端是如何实现 1883 的
+- Electron 主进程创建窗口时指定 `preload` 脚本（`electron/preload.cjs`）。
+- `preload` 在 Node 环境中 `require('mqtt')`（Node 原生版 mqtt.js），并注入到 `window.mqtt`，同时写入标记：
+  - `window.__MQTT_PRO_DESKTOP__ = true`
+  - `window.__MQTT_PRO_MQTT_SOURCE__ = 'native'`
+- React 前端保持入口不变，统一使用 `window.mqtt.connect(...)`：
+  - 选择 `ws/wss` → 走 WebSocket（可带 path，如 `/mqtt`）
+  - 选择 `mqtt/mqtts` → 走 TCP/TLS（不使用 path）
+
+### 常见问题：桌面端显示 “preload 未生效 / 只能用 CDN（仅 ws/wss）”
+典型症状：`isElectron=是, preload=否, mqttSource=cdn`，并提示：
+> 桌面端未启用 MQTT TCP（preload 未生效）
+
+根因（已修复）：窗口处于 **sandbox 受限环境** 时，`preload` 可能无法使用 Node 的 `require('mqtt')`，导致注入失败，前端回退到 CDN 浏览器版 mqtt（只支持 ws/wss）。
+
+修复要点：在 `electron/main.cjs` 的 `webPreferences` 中显式设置 `sandbox: false`，确保 `preload` 可正常加载 Node 模块。
+
+### 桌面端诊断日志
+为便于定位 preload/路径问题，桌面端会写诊断日志到：
+- `%TEMP%\\mqtt-pro-diagnostics\\main.log`（主进程：preloadPath、resourcesPath、sandbox 等）
+- `%TEMP%\\mqtt-pro-diagnostics\\preload.log`（preload：是否运行、mqtt 是否注入、require 失败原因）
+
 ## 功能特性
 
 ### 核心功能
-- **MQTT 连接管理** - 支持 `ws://` 和 `wss://` WebSocket 协议
+- **MQTT 连接管理** - Web 版支持 `ws://` / `wss://`；桌面版额外支持 `mqtt://` / `mqtts://`
 - **订阅管理** - 支持多主题订阅，自动重订阅功能
 - **消息发布** - 支持 QoS 0/1/2，Retain 标志
 - **实时日志** - 消息收发实时显示，支持 TEXT/HEX 视图切换
@@ -54,19 +84,37 @@ npm install
 npm run dev
 ```
 
+### 启动桌面端开发模式
+
+```bash
+npm run desktop:dev
+```
+
 ### 构建生产版本
 
 ```bash
 npm run build
 ```
 
+### 构建桌面端安装包（Windows）
+
+```bash
+npm run desktop:build
+```
+
+构建产物：
+- `release/win-unpacked/`：免安装目录版（直接运行 `MQTT Pro.exe`）
+- `release/MQTT Pro Setup <version>.exe`：NSIS 安装包
+
+注意：打包前请关闭正在运行的 `MQTT Pro.exe`，否则可能因文件占用导致 `Access is denied`。
+
 ## 使用指南
 
 ### 连接 MQTT 服务器
 
 1. 在左侧「连接配置」面板中输入服务器信息
-2. 选择协议（ws/wss），端口会自动适配
-3. 填写 Path（通常为 `/mqtt`）
+2. 选择协议：Web 版仅 `ws/wss`；桌面版可选 `ws/wss/mqtt/mqtts`，端口会自动适配
+3. `ws/wss` 需要填写 Path（通常为 `/mqtt`）；`mqtt/mqtts` 不需要 Path
 4. 可选填写用户名和密码
 5. 点击「连接」按钮
 
