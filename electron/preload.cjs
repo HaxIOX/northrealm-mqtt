@@ -101,7 +101,6 @@ try {
   const tryRequire = (label, reqPath) => {
     tried.push(label);
     try {
-      // eslint-disable-next-line import/no-dynamic-require
       return require(reqPath);
     } catch (e) {
       const msg = String(e && e.message ? e.message : e);
@@ -149,15 +148,20 @@ try {
   console.log('[Preload] MQTT.connect 类型:', typeof mqtt.connect);
 } catch (e) {
   const errorMsg = String(e && e.message ? e.message : e);
+  const isMissingMqtt =
+    /Cannot find module ['"]mqtt['"]|cannot find module ['"]mqtt['"]|MODULE_NOT_FOUND/i.test(errorMsg);
+  const friendlyMsg = isMissingMqtt
+    ? "Cannot find module 'mqtt'（桌面端直连 1883/8883 必需）。请在项目根目录执行 `npm install`，或重新安装/重装桌面版。"
+    : errorMsg;
   console.error('[Preload] ❌ MQTT 模块加载失败:', errorMsg);
   console.error('[Preload] 错误堆栈:', e.stack);
-  logPreload('mqtt require failed', { error: errorMsg, stack: String(e?.stack || '') });
+  logPreload('mqtt require failed', { error: errorMsg, friendly: friendlyMsg, stack: String(e?.stack || '') });
   try {
-    if (typeof window !== 'undefined') window.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__ = errorMsg;
+    if (typeof window !== 'undefined') window.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__ = friendlyMsg;
   } catch {
     // ignore
   }
-  globalThis.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__ = errorMsg;
+  globalThis.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__ = friendlyMsg;
   try {
     if (typeof window !== 'undefined') window.__MQTT_PRO_MQTT_RESOLVE_PATH__ = null;
   } catch {
