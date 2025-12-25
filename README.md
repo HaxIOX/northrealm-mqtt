@@ -2,6 +2,8 @@
 
 一款现代化的 MQTT WebSocket 调试工具，支持云同步、主题切换、消息模板等高级功能。
 
+许可证：`AGPL-3.0-only`（见 `LICENSE`）。名称/Logo 使用规则见 `TRADEMARK.md`。
+
 ## 桌面版（Windows）与 1883/8883 支持
 
 本项目同时支持：
@@ -116,7 +118,9 @@ npm run desktop:build
 2. 选择协议：Web 版仅 `ws/wss`；桌面版可选 `ws/wss/mqtt/mqtts`，端口会自动适配
 3. `ws/wss` 需要填写 Path（通常为 `/mqtt`）；`mqtt/mqtts` 不需要 Path
 4. 可选填写用户名和密码
-5. 点击「连接」按钮
+5. 可使用「公共服务器预设（快速填充）」一键填充常用公共 Broker（默认按 `wss` 填充）
+6. 点击「连接」按钮；连接中可点击「取消连接」中止尝试
+7. 在「高级设置」中可开启/关闭「自动重连」（默认关闭，避免端口未开时反复重试）
 
 ### 预设公共服务器
 
@@ -164,6 +168,27 @@ npm run desktop:build
 2. 输入或生成一个 Space ID
 3. 在其他设备使用相同 Space ID 即可同步
 
+### 开发者模式（事件中心）
+
+为保持界面简洁，右上角「事件中心（铃铛）」默认仅在开发者模式显示。
+
+开启方式：
+
+- 开发环境：运行 `npm run dev`（自动开启）
+- 正式/打包版：打开开发者工具（浏览器 F12；桌面版通常 `Ctrl+Shift+I`），在 Console 执行：
+
+```js
+localStorage.setItem('mqtt_dev_mode', '1');
+location.reload();
+```
+
+关闭方式：
+
+```js
+localStorage.removeItem('mqtt_dev_mode');
+location.reload();
+```
+
 ## 项目结构
 
 ```
@@ -197,7 +222,18 @@ __app_id = "your-app-id";
 
 ## 许可证
 
-MIT License
+本项目使用 **GNU AGPL v3**（`AGPL-3.0-only`），详见 `LICENSE`。
+
+- 允许使用、修改与分发，但要求在相同许可证下提供对应源代码。
+- 如将本项目作为网络服务对外提供使用（例如部署为在线服务），也需要向用户提供源代码（AGPL 的网络条款）。
+
+项目名称与 Logo 不在许可证授权范围内，见 `TRADEMARK.md`。
+
+## 命名（待定）
+
+当前项目名称尚未最终确定。作者 GitHub ID 为 `haxiox`，后续可能采用更具辨识度的命名（例如带 `hax`/`haxio` 前缀，或使用 `NeoMQTT` 等短名称）。
+
+欢迎在 Issue 中对项目命名与 Logo 提供建议。
 
 ## 贡献
 

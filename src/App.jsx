@@ -61,6 +61,19 @@ export default function MqttDebugger() {
 
   const getDesktopTcpCapable = () => isDesktopTcpCapable();
 
+  const isDevMode = (() => {
+    try {
+      if (import.meta?.env?.DEV) return true;
+    } catch {
+      // ignore
+    }
+    try {
+      return localStorage.getItem('mqtt_dev_mode') === '1';
+    } catch {
+      return false;
+    }
+  })();
+
   // --- 用户与云同步状态 ---
   const [user, setUser] = useState(null);
   const [syncSpaceId, setSyncSpaceId] = useState(''); 
@@ -83,6 +96,20 @@ export default function MqttDebugger() {
   const [sdkReady, setSdkReady] = useState(false);
   const [connectDuration, setConnectDuration] = useState(0);
   const [reconnectCount, setReconnectCount] = useState(0); // 新增：重连计数
+  const [autoReconnect, setAutoReconnect] = useState(() => {
+    try {
+      return localStorage.getItem('mqtt_auto_reconnect') === '1';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('mqtt_auto_reconnect', autoReconnect ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [autoReconnect]);
   
   // --- 数据状态 ---
   const [savedConfigs, setSavedConfigs] = useState([]);
@@ -111,6 +138,7 @@ export default function MqttDebugger() {
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [configCollapsed, setConfigCollapsed] = useState(false); // 新增：连接后折叠配置面板
+  const [selectedPresetBroker, setSelectedPresetBroker] = useState('');
 
   const [subscriptions, setSubscriptions] = useState([]);
   const [subscriptionsCollapsed, setSubscriptionsCollapsed] = useState(true);
@@ -176,6 +204,8 @@ export default function MqttDebugger() {
   const msgCountRef = useRef(0);
   const reconnectCountRef = useRef(0);
   useEffect(() => { reconnectCountRef.current = reconnectCount; }, [reconnectCount]);
+  const clientRef = useRef(null);
+  useEffect(() => { clientRef.current = client; }, [client]);
 
   // 主题状态
   const [theme, setTheme] = useState(() => {
@@ -837,7 +867,12 @@ export default function MqttDebugger() {
     ) {
       return addLog('error', '', '你正在用 ws/wss 连接 1883/8883（这是 MQTT TCP/TLS 端口，不是 WebSocket 端口），请切换协议为 mqtt/mqtts');
     }
-    if (client) { client.end(); setClient(null); }
+    setReconnectCount(0);
+    if (clientRef.current) {
+      clientRef.current.end(true);
+      clientRef.current = null;
+    }
+    if (client) { setClient(null); }
     setConnectStatus('connecting');
     const pathPart = (connection.protocol === 'ws' || connection.protocol === 'wss') ? connection.path : '';
     const url = `${connection.protocol}://${connection.host}:${connection.port}${pathPart}`;
@@ -889,7 +924,7 @@ export default function MqttDebugger() {
         clean: advancedConfig.clean,
         keepalive: Number(advancedConfig.keepalive),
         connectTimeout: 10000,      // 增加到10秒
-        reconnectPeriod: 3000,      // 增加到3秒，避免频繁重连
+        reconnectPeriod: autoReconnect ? 3000 : 0,
         protocolId: advancedConfig.protocolVersion === 3 ? 'MQIsdp' : 'MQTT',
         protocolVersion: Number(advancedConfig.protocolVersion)
       };
@@ -898,6 +933,7 @@ export default function MqttDebugger() {
       addLog('system', '', `连接选项: timeout=${opts.connectTimeout}ms, reconnect=${opts.reconnectPeriod}ms, protocol=${opts.protocolId} v${opts.protocolVersion}`);
 
       const newClient = window.mqtt.connect(url, opts);
+      clientRef.current = newClient;
 
       // 连接建立事件
       newClient.on('connect', (connack) => {
@@ -926,7 +962,8 @@ export default function MqttDebugger() {
       newClient.on('error', (err) => {
         setConnectStatus('error');
         const errorMsg = err.message || err.toString();
-        addLog('error', '', `❌ 连接错误: ${errorMsg}`);
+
+        const diagnosis = diagnoseConnectionError(err);
 
         // 详细错误信息
         const errorDetails = {
@@ -944,11 +981,40 @@ export default function MqttDebugger() {
           Object.entries(errorDetails).filter(([, v]) => v != null)
         );
 
+        if (!isDevMode) {
+          const shortDetails = [];
+          if (filteredDetails.code) shortDetails.push(`code=${filteredDetails.code}`);
+          if (filteredDetails.address) shortDetails.push(`address=${filteredDetails.address}`);
+          if (filteredDetails.port) shortDetails.push(`port=${filteredDetails.port}`);
+          if (filteredDetails.syscall) shortDetails.push(`syscall=${filteredDetails.syscall}`);
+
+          const hintLines = [];
+          if (connection.protocol === 'ws' || connection.protocol === 'wss') {
+            hintLines.push('检查 Broker 是否开启 WebSocket 端口（常见 8083/8084）以及 Path（常见 /mqtt）');
+          }
+          if (isDesktopShell && (connection.protocol === 'ws' || connection.protocol === 'wss') && (Number(connection.port) === 1883 || Number(connection.port) === 8883)) {
+            hintLines.push('当前端口是 MQTT TCP/TLS（1883/8883），请切换协议到 mqtt/mqtts');
+          }
+          if (autoReconnect) {
+            hintLines.push('如端口未开会反复重试：可先关闭“自动重连”');
+          }
+
+          const detailsText = [
+            shortDetails.length ? `详情: ${shortDetails.join(', ')}` : '',
+            diagnosis || '',
+            hintLines.length ? `💡 建议: ${hintLines.join('；')}` : '',
+          ].filter(Boolean).join('\n');
+
+          addLog('error', '', `❌ 连接错误: ${errorMsg}`, detailsText);
+          return;
+        }
+
+        addLog('error', '', `❌ 连接错误: ${errorMsg}`);
+
         if (Object.keys(filteredDetails).length > 1) {
           addLog('system', '', `错误详情: ${JSON.stringify(filteredDetails, null, 2)}`);
         }
 
-        const diagnosis = diagnoseConnectionError(err);
         if (diagnosis) addLog('system', '', diagnosis);
       });
 
@@ -1023,10 +1089,32 @@ export default function MqttDebugger() {
       setClient(newClient);
     } catch (e) {
       setConnectStatus('error');
-      addLog('error', '', e.message);
       const diagnosis = diagnoseConnectionError(e);
-      if (diagnosis) addLog('system', '', diagnosis);
+      const msg = String(e?.message || e || '连接失败');
+      if (!isDevMode && diagnosis) {
+        addLog('error', '', msg, diagnosis);
+      } else {
+        addLog('error', '', msg);
+        if (diagnosis) addLog('system', '', diagnosis);
+      }
     }
+  };
+
+  const applyPresetBroker = (presetName) => {
+    const preset = (PRESET_BROKERS || []).find((b) => b && b.name === presetName);
+    if (!preset) return;
+    const protocol = 'wss';
+    const port = Number(preset.wss || 8084);
+    const path = String(preset.path || '/mqtt');
+
+    setConnection((prev) => ({
+      ...prev,
+      name: preset.name,
+      host: preset.host,
+      protocol,
+      port,
+      path,
+    }));
   };
 
   const handleDisconnect = () => {
@@ -1038,13 +1126,15 @@ export default function MqttDebugger() {
       timerRef.current = null;
       setTimerEnabled(false);
     }
-    if (client) {
+    const currentClient = clientRef.current || client;
+    if (currentClient) {
       // 强制结束连接，传入true表示不再重连
-      client.end(true);
+      currentClient.end(true);
+      clientRef.current = null;
       setClient(null);
       setConnectStatus('disconnected');
       setReconnectCount(0); // 重置重连计数
-      addLog('system', '', '✅ 已断开连接（停止重连）');
+      addLog('system', '', connectStatus === 'connecting' ? '✅ 已取消连接' : '✅ 已断开连接（停止重连）');
     }
   };
 
@@ -1157,13 +1247,15 @@ export default function MqttDebugger() {
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
         if (connectStatus === 'connected') handleDisconnect();
+        else if (connectStatus === 'connecting') handleDisconnect();
+        else if (reconnectCount > 0) handleDisconnect();
         else if (connectStatus !== 'connecting') handleConnect();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [client, connectStatus, eventCenterOpen, pubTopic, pubMessage, pubQoS, pubRetain, showQuickActionsPanel]);
+  }, [client, connectStatus, reconnectCount, eventCenterOpen, pubTopic, pubMessage, pubQoS, pubRetain, showQuickActionsPanel]);
 
   // 重置统计
   const resetStats = () => {
@@ -1180,7 +1272,7 @@ export default function MqttDebugger() {
   const isMessageLog = (log) => (
     log.type === 'sent' ||
     log.type === 'received' ||
-    (log.type === 'error' && !!log.topic)
+    (log.type === 'error' && (!!log.topic || !isDevMode))
   );
   const messageLogs = logs.filter(isMessageLog);
   const filteredMessageLogs = messageLogs.filter((log) => (
@@ -1645,12 +1737,28 @@ export default function MqttDebugger() {
                    <select className={`flex-1 ${t.bgInput} border ${t.border} text-xs rounded-lg px-3 py-2 focus:border-indigo-500 outline-none transition-all ${t.text}`} onChange={handleLoadConfig} value={connection.name || ""}>
                      <option value="" disabled>加载预设配置...</option>
                      {savedConfigs.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                   </select>
-                   <button onClick={handleSaveConfig} title="保存配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-indigo-500 transition-colors`}><Save className="w-4 h-4"/></button>
-                   {connection.name && <button onClick={handleDeleteConfig} title="删除配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-rose-500 transition-colors`}><Trash2 className="w-4 h-4"/></button>}
-                </div>
+                    </select>
+                    <button onClick={handleSaveConfig} title="保存配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-indigo-500 transition-colors`}><Save className="w-4 h-4"/></button>
+                    {connection.name && <button onClick={handleDeleteConfig} title="删除配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-rose-500 transition-colors`}><Trash2 className="w-4 h-4"/></button>}
+                 </div>
 
-                <input type="text" value={connection.host} onChange={(e) => setConnection({...connection, host: e.target.value})} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Host (e.g. broker.emqx.io)"/>
+                 <select
+                   value={selectedPresetBroker}
+                   onChange={(e) => {
+                     const name = e.target.value;
+                     setSelectedPresetBroker(name);
+                     if (name) applyPresetBroker(name);
+                   }}
+                   disabled={connectStatus !== 'disconnected'}
+                   className={`w-full ${t.bgInput} border ${t.border} text-xs rounded-lg px-3 py-2 focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}
+                 >
+                   <option value="">公共服务器预设（快速填充）...</option>
+                   {PRESET_BROKERS.map((b) => (
+                     <option key={b.name} value={b.name}>{b.name}</option>
+                   ))}
+                 </select>
+
+                 <input type="text" value={connection.host} onChange={(e) => setConnection({...connection, host: e.target.value})} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Host (e.g. broker.emqx.io)"/>
 
                 <div className="grid grid-cols-2 gap-2">
                   <input type="number" value={connection.port} onChange={(e) => handlePortChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Port"/>
@@ -1715,13 +1823,17 @@ export default function MqttDebugger() {
                         <input type="checkbox" checked={autoResubscribe} onChange={(e) => setAutoResubscribe(e.target.checked)} className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-emerald-600"/>
                         <span className={`text-xs ${t.textSecondary}`}>自动重订阅</span>
                       </label>
+                      <label className="flex items-center gap-1 cursor-pointer ml-auto">
+                        <input type="checkbox" checked={autoReconnect} onChange={(e) => setAutoReconnect(e.target.checked)} className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-amber-600"/>
+                        <span className={`text-xs ${t.textSecondary}`}>自动重连</span>
+                      </label>
                     </div>
                   </div>
                 )}
 
                 <button
-                  onClick={connectStatus !== 'connected' ? handleConnect : handleDisconnect}
-                  disabled={connectStatus === 'connecting' && reconnectCount === 0 || !sdkReady}
+                  onClick={connectStatus === 'connected' || connectStatus === 'connecting' || reconnectCount > 0 ? handleDisconnect : handleConnect}
+                  disabled={!sdkReady}
                   className={`w-full text-white py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all text-sm ${
                     connectStatus !== 'connected'
                       ? reconnectCount > 0
@@ -1733,6 +1845,8 @@ export default function MqttDebugger() {
                   {connectStatus !== 'connected' ? (
                     !sdkReady ? (
                       <><Loader2 className="w-4 h-4 animate-spin"/> Loading...</>
+                    ) : connectStatus === 'connecting' && reconnectCount === 0 ? (
+                      <><Square className="w-4 h-4 fill-current"/> 取消连接</>
                     ) : reconnectCount > 0 ? (
                       <><Square className="w-4 h-4 fill-current"/> 停止重连 ({reconnectCount})</>
                     ) : (
@@ -1828,14 +1942,16 @@ export default function MqttDebugger() {
             >
               <RotateCcw size={18} />
             </button>
-            <button
-              onClick={() => setEventCenterOpen(true)}
-              title="事件中心"
-              className={`relative p-2 ${t.bgTertiary} border ${t.border} rounded-xl ${t.textSecondary} hover:${t.text} ${t.bgHover} transition-all`}
-            >
-              <Bell size={18} />
-              {msgStats.errors > 0 && <span className={`absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full border-2 ${theme === 'light' ? 'border-[#F8FAFC]' : 'border-[#0B1120]'}`}></span>}
-            </button>
+            {isDevMode && (
+              <button
+                onClick={() => setEventCenterOpen(true)}
+                title="事件中心（开发模式）"
+                className={`relative p-2 ${t.bgTertiary} border ${t.border} rounded-xl ${t.textSecondary} hover:${t.text} ${t.bgHover} transition-all`}
+              >
+                <Bell size={18} />
+                {msgStats.errors > 0 && <span className={`absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full border-2 ${theme === 'light' ? 'border-[#F8FAFC]' : 'border-[#0B1120]'}`}></span>}
+              </button>
+            )}
           </div>
         </header>
 
@@ -2033,7 +2149,7 @@ export default function MqttDebugger() {
           </div>
         </div>
 
-        {eventCenterOpen && (
+        {isDevMode && eventCenterOpen && (
           <div className="fixed inset-0 z-50">
             <button
               type="button"
