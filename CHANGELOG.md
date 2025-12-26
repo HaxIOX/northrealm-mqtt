@@ -4,6 +4,10 @@
 
 - (TBD)
 
+## 0.1.3 - 2025-12-26
+
+- Fix: avoid showing MQTT handshake failure diagnostics when the user manually disconnects
+
 ## 0.1.2 - 2025-12-26
 
 - Fix: `npm run desktop:dev` on Windows (avoid `spawn electron ENOENT` by resolving the Electron binary path)
