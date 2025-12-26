@@ -61,6 +61,25 @@ npm run dev
 npm run build
 ```
 
+### 安装依赖失败（Electron 下载超时）怎么办？
+
+你遇到的 `connect ETIMEDOUT ...:443` 通常是 **Electron 二进制下载被网络阻断/超时**，不是命令写错。
+
+在 Windows PowerShell 里先设置镜像，再安装：
+
+```powershell
+$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+$env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+npm ci
+```
+
+如果你想永久生效（需要重新打开终端）：
+
+```powershell
+setx ELECTRON_MIRROR "https://npmmirror.com/mirrors/electron/"
+setx ELECTRON_BUILDER_BINARIES_MIRROR "https://npmmirror.com/mirrors/electron-builder-binaries/"
+```
+
 ### Windows 桌面端（开发/打包）
 
 ```bash

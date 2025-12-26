@@ -63,6 +63,25 @@ npm ci
 npm run dev
 ```
 
+### Install fails (Electron download timeout)
+
+If you see `connect ETIMEDOUT ...:443`, it’s usually a **network timeout while downloading Electron binaries**, not a wrong command.
+
+On Windows PowerShell, set mirrors and retry:
+
+```powershell
+$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+$env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+npm ci
+```
+
+To make it persistent (restart your terminal):
+
+```powershell
+setx ELECTRON_MIRROR "https://npmmirror.com/mirrors/electron/"
+setx ELECTRON_BUILDER_BINARIES_MIRROR "https://npmmirror.com/mirrors/electron-builder-binaries/"
+```
+
 ## Desktop (Windows)
 
 ```bash
