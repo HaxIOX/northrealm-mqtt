@@ -201,7 +201,6 @@ export default function MqttDebugger() {
   // 自动重订阅
   const [autoResubscribe, setAutoResubscribe] = useState(true);
   const lastSubscriptionsRef = useRef([]);
-  const msgCountRef = useRef(0);
   const reconnectCountRef = useRef(0);
   useEffect(() => { reconnectCountRef.current = reconnectCount; }, [reconnectCount]);
   const clientRef = useRef(null);
@@ -595,7 +594,7 @@ export default function MqttDebugger() {
       const text = await file.text();
       const parsed = JSON.parse(text);
       const data = parseBackup(parsed);
-      if (!data) throw new Error('文件格式不正确（不是 MQTT Pro 备份）');
+      if (!data) throw new Error('文件格式不正确（不是 Northrealm 备份）');
 
       openConfirmModal('确认导入备份？（同名配置会覆盖，本地数据会合并）', () => {
         if (Array.isArray(data.configs)) updateData('configs', mergeConfigsByName(savedConfigs, data.configs));
@@ -688,7 +687,7 @@ export default function MqttDebugger() {
 
   const handleFireAction = (action) => {
     if (!client || !client.connected) return addLog('error', '', '请先连接服务器');
-    const payload = parseMessageTemplate(action.payload);
+    const payload = action.payload;
     client.publish(action.topic, payload, { qos: action.qos, retain: action.retain }, (err) => {
       if (err) addLog('error', action.topic, `指令 "${action.name}" 发送失败: ${err.message}`);
       else addLog('sent', action.topic, payload, `指令: ${action.name}`);
@@ -789,16 +788,6 @@ export default function MqttDebugger() {
     }
   }, [isDesktopShell, connection.port, connection.protocol]);
 
-  // 解析消息模板变量
-  const parseMessageTemplate = (message) => {
-    msgCountRef.current++;
-    return message
-      .replace(/\{\{timestamp\}\}/g, Date.now())
-      .replace(/\{\{datetime\}\}/g, new Date().toISOString())
-      .replace(/\{\{random\}\}/g, Math.random().toString(36).substr(2, 8))
-      .replace(/\{\{count\}\}/g, msgCountRef.current)
-      .replace(/\{\{uuid\}\}/g, crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
-  };
 
   // 诊断连接问题
   const diagnoseConnectionError = (err) => {
@@ -1166,8 +1155,8 @@ export default function MqttDebugger() {
     if (!client?.connected) return addLog('error', '', '请先连接');
     if (!pubTopic) return addLog('error', '', '请输入 Topic');
 
-    // 解析消息模板
-    const parsedMessage = parseMessageTemplate(pubMessage);
+
+    const parsedMessage = pubMessage;
 
     client.publish(pubTopic, parsedMessage, { qos: pubQoS, retain: pubRetain }, e => {
       if (e) {
@@ -1197,7 +1186,7 @@ export default function MqttDebugger() {
       addLog('system', '', `定时发送已启动，间隔 ${timerInterval}ms`);
 
       timerRef.current = setInterval(() => {
-        const parsedMessage = parseMessageTemplate(pubMessage);
+        const parsedMessage = pubMessage;
         client.publish(pubTopic, parsedMessage, { qos: pubQoS, retain: pubRetain }, e => {
           if (e) addLog('error', pubTopic, e.message);
           else addLog('sent', pubTopic, parsedMessage, `定时发送 QoS: ${pubQoS}`);
@@ -1260,7 +1249,6 @@ export default function MqttDebugger() {
   // 重置统计
   const resetStats = () => {
     setMsgStats({ sent: 0, received: 0, errors: 0 });
-    msgCountRef.current = 0;
   };
   
   // Formatters

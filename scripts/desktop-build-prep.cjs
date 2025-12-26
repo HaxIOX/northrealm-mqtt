@@ -16,7 +16,7 @@ function getProductExeName() {
     const productName = pkg?.build?.productName || 'ElectronApp';
     return productName.endsWith('.exe') ? productName : `${productName}.exe`;
   } catch {
-    return 'MQTT Pro.exe';
+    return 'Northrealm.exe';
   }
 }
 
@@ -80,8 +80,7 @@ async function ensureRemovableDir(dirPath, retries = 10) {
     // eslint-disable-next-line no-console
     console.error(`   具体错误: ${String(e?.message || e)}`);
     // eslint-disable-next-line no-console
-    console.error('   处理建议：关闭 MQTT Pro、关闭打开了 win-unpacked 的资源管理器窗口/预览、或重启后再打包。');
+    console.error('   处理建议：关闭 Northrealm、关闭打开了 win-unpacked 的资源管理器窗口/预览、或重启后再打包。');
     process.exit(1);
   }
 })();
-

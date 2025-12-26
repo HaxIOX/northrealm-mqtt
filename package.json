@@ -1,7 +1,7 @@
 {
-  "name": "mqtt-debugger",
+  "name": "northrealm-mqtt",
   "private": true,
-  "version": "0.0.3",
+  "version": "0.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -37,10 +37,10 @@
     "tailwindcss": "^3.4.19",
     "vite": "^7.2.4"
   },
-  "description": "This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.",
+  "description": "Northrealm (NR) — MQTT debugger / MQTT client (Web + Windows Desktop).",
   "build": {
-    "appId": "com.vibtek.mqttpro",
-    "productName": "MQTT Pro",
+    "appId": "com.vibtek.northrealm",
+    "productName": "Northrealm",
     "asar": false,
     "electronDownload": {
       "mirror": "https://npmmirror.com/mirrors/electron/"
@@ -61,7 +61,15 @@
       "signAndEditExecutable": false
     }
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "mqtt",
+    "mqtt-client",
+    "mqtt-debugger",
+    "iot",
+    "electron",
+    "vite",
+    "react"
+  ],
+  "author": "VIBTEK",
   "license": "AGPL-3.0-only"
 }

@@ -1,240 +1,104 @@
-# MQTT Pro
+# Northrealm (北境) · MQTT 调试器 / MQTT 客户端 🚀
 
-一款现代化的 MQTT WebSocket 调试工具，支持云同步、主题切换、消息模板等高级功能。
+[简体中文](README.md) | [English](README.en.md)
 
-许可证：`AGPL-3.0-only`（见 `LICENSE`）。名称/Logo 使用规则见 `TRADEMARK.md`。
+简称：`NR`。
 
-## 桌面版（Windows）与 1883/8883 支持
+面向 IoT 开发/测试的 MQTT 工具：**Web 端（浏览器）+ Windows 桌面端（Electron）**，覆盖连接、订阅、发布、日志、快捷指令与定时发送。✨
 
-本项目同时支持：
-- **Web 版（浏览器）**：仅支持 `ws://` / `wss://`（WebSocket）连接 MQTT Broker
-- **桌面版（Electron/Windows）**：在保留 `ws/wss` 的同时，新增支持 `mqtt://`（1883）与 `mqtts://`（8883）直连
+> 命名灵感：**Northrealm（北境）** — 取自 2025-12-25（圣诞节）上线的仪式感与“消息流向北”的意象。
 
-原因说明：浏览器环境无法直接建立 TCP Socket，因此 **无法直连 1883/8883**；要么使用 Broker 提供的 WebSocket 端口（如 8083/8084），要么使用桌面端（Node 能力）。
+## 亮点  ⭐
 
-### 桌面端是如何实现 1883 的
-- Electron 主进程创建窗口时指定 `preload` 脚本（`electron/preload.cjs`）。
-- `preload` 在 Node 环境中 `require('mqtt')`（Node 原生版 mqtt.js），并注入到 `window.mqtt`，同时写入标记：
-  - `window.__MQTT_PRO_DESKTOP__ = true`
-  - `window.__MQTT_PRO_MQTT_SOURCE__ = 'native'`
-- React 前端保持入口不变，统一使用 `window.mqtt.connect(...)`：
-  - 选择 `ws/wss` → 走 WebSocket（可带 path，如 `/mqtt`）
-  - 选择 `mqtt/mqtts` → 走 TCP/TLS（不使用 path）
+- 配置可导入/导出：一键备份，迁移/分享更省心（可选“含密码导出”，**明文**，请妥善保管）
+- 快捷指令：保存常用发布，一键发送（不用来回复制粘贴）
+- 双端覆盖：Web 端（`ws/wss`）+ Windows 桌面端（额外支持 `mqtt/mqtts` 直连 1883/8883）
 
-### 常见问题：桌面端显示 “preload 未生效 / 只能用 CDN（仅 ws/wss）”
-典型症状：`isElectron=是, preload=否, mqttSource=cdn`，并提示：
-> 桌面端未启用 MQTT TCP（preload 未生效）
+## 功能
 
-根因（已修复）：窗口处于 **sandbox 受限环境** 时，`preload` 可能无法使用 Node 的 `require('mqtt')`，导致注入失败，前端回退到 CDN 浏览器版 mqtt（只支持 ws/wss）。
-
-修复要点：在 `electron/main.cjs` 的 `webPreferences` 中显式设置 `sandbox: false`，确保 `preload` 可正常加载 Node 模块。
-
-### 桌面端诊断日志
-为便于定位 preload/路径问题，桌面端会写诊断日志到：
-- `%TEMP%\\mqtt-pro-diagnostics\\main.log`（主进程：preloadPath、resourcesPath、sandbox 等）
-- `%TEMP%\\mqtt-pro-diagnostics\\preload.log`（preload：是否运行、mqtt 是否注入、require 失败原因）
-
-## 功能特性
-
-### 核心功能
-- **MQTT 连接管理** - Web 版支持 `ws://` / `wss://`；桌面版额外支持 `mqtt://` / `mqtts://`
-- **订阅管理** - 支持多主题订阅，自动重订阅功能
-- **消息发布** - 支持 QoS 0/1/2，Retain 标志
-- **实时日志** - 消息收发实时显示，支持 TEXT/HEX 视图切换
-- **连接诊断** - 智能诊断连接错误，提供解决建议
-
-### 高级功能
-- **快捷指令** - 保存常用发布指令，一键发送
-- **消息模板变量** - 支持动态变量：`{{timestamp}}`、`{{datetime}}`、`{{random}}`、`{{count}}`、`{{uuid}}`
-- **定时发送** - 自定义间隔自动发送消息
-- **配置管理** - 保存/加载多个连接配置
-
-### 云同步
-- **多设备同步** - 基于 Firebase 的实时云同步
-- **Space ID** - 使用相同 Space ID 的设备自动同步配置和快捷指令
-- **本地优先** - 无 Firebase 配置时自动降级为本地模式
-
-### 界面特性
-- **双主题** - 支持深色/浅色主题切换
-- **响应式设计** - 现代化 UI，流畅动画
-- **快捷键支持**
-  - `Ctrl/Cmd + Enter` - 发送消息
-  - `Ctrl/Cmd + K` - 连接/断开
-  - `Ctrl/Cmd + D` - 断开连接
-  - `Ctrl/Cmd + L` - 清空日志
+- 连接管理：多配置保存/切换、自动重连、连接诊断
+- 本地备份：配置/快捷指令一键导入/导出（可选“含密码导出”，明文）
+- 订阅/发布：QoS 0/1/2、Retain、通配符 `#`/`+`
+- 日志与视图：收发实时展示、TEXT/HEX 切换
+- 快捷指令：保存常用发布，一键发送
 
 ## 技术栈
 
-- **前端框架**: React 18
-- **构建工具**: Vite
-- **样式方案**: Tailwind CSS
-- **图标库**: Lucide React
-- **MQTT 客户端**: mqtt.js v5.3.5
-- **云服务**: Firebase (Auth + Firestore)
+- Web：Vite + React + Tailwind CSS
+- Windows：Electron（`electron/main.cjs` + `electron/preload.cjs`）
+- MQTT：mqtt.js
+
+## Web / 桌面：协议支持差异  🪟🌐
+
+| 平台 | 支持协议 | 说明 |
+|---|---|---|
+| Web（浏览器） | `ws://` / `wss://` | 浏览器无法直连 TCP，因此不支持 `mqtt://`/`mqtts://` |
+| Windows 桌面端（Electron） | `ws://` / `wss://` / `mqtt://` / `mqtts://` | `preload` 在 Node 环境 `require('mqtt')` 并注入到 `window.mqtt` |
+
+桌面端诊断日志：
+- `%TEMP%\\mqtt-pro-diagnostics\\main.log`
+- `%TEMP%\\mqtt-pro-diagnostics\\preload.log`
+
+## 环境要求
+
+- Node.js：`^20.19.0 || >=22.12.0`（Vite 7 要求）
 
 ## 快速开始
 
-### 安装依赖
-
 ```bash
-npm install
-```
+# 安装依赖
+npm ci
 
-### 启动开发服务器
-
-```bash
+# Web 开发（http://localhost:5173）
 npm run dev
-```
 
-### 启动桌面端开发模式
-
-```bash
-npm run desktop:dev
-```
-
-### 构建生产版本
-
-```bash
+# Web 构建（产物：dist/）
 npm run build
 ```
 
-### 构建桌面端安装包（Windows）
+### Windows 桌面端（开发/打包）
 
 ```bash
+# 桌面端开发：并行启动 Vite + Electron
+npm run desktop:dev
+
+# 桌面端打包（Windows）：产物输出到 release/
 npm run desktop:build
 ```
 
-构建产物：
-- `release/win-unpacked/`：免安装目录版（直接运行 `MQTT Pro.exe`）
-- `release/MQTT Pro Setup <version>.exe`：NSIS 安装包
+> 说明：打包后的 Windows 程序显示名来自 `package.json` 的 `build.productName`（当前为 `Northrealm`）。后续如需进一步统一图标/签名等，可再补齐。
 
-注意：打包前请关闭正在运行的 `MQTT Pro.exe`，否则可能因文件占用导致 `Access is denied`。
+## 公共 Broker 预设（示例）
 
-## 使用指南
-
-### 连接 MQTT 服务器
-
-1. 在左侧「连接配置」面板中输入服务器信息
-2. 选择协议：Web 版仅 `ws/wss`；桌面版可选 `ws/wss/mqtt/mqtts`，端口会自动适配
-3. `ws/wss` 需要填写 Path（通常为 `/mqtt`）；`mqtt/mqtts` 不需要 Path
-4. 可选填写用户名和密码
-5. 可使用「公共服务器预设（快速填充）」一键填充常用公共 Broker（默认按 `wss` 填充）
-6. 点击「连接」按钮；连接中可点击「取消连接」中止尝试
-7. 在「高级设置」中可开启/关闭「自动重连」（默认关闭，避免端口未开时反复重试）
-
-### 预设公共服务器
-
-| 服务器 | Host | WS 端口 | WSS 端口 | Path |
-|--------|------|---------|----------|------|
+| 服务商 | Host | WS | WSS | Path |
+|---|---:|---:|---:|---|
 | EMQX | broker.emqx.io | 8083 | 8084 | /mqtt |
 | HiveMQ | broker.hivemq.com | 8000 | 8884 | /mqtt |
 | Mosquitto | test.mosquitto.org | 8080 | 8081 | (空) |
 
-### 订阅主题
+## Release（开源建议） 📦
 
-1. 在「订阅监控」区域输入主题
-2. 支持通配符：`#`（多级）、`+`（单级）
-3. 点击「订阅」或按 Enter
+为了让用户不必自己装环境，建议用 GitHub Release 分发：
 
-### 发布消息
-
-1. 在底部发布区域输入 Topic
-2. 选择 QoS 等级和 Retain 选项
-3. 在文本框中输入消息内容
-4. 点击「发送」或按 `Ctrl+Enter`
-
-### 使用消息模板
-
-在消息中使用变量，发送时会自动替换：
-
-```json
-{
-  "timestamp": {{timestamp}},
-  "id": "{{uuid}}",
-  "seq": {{count}}
-}
-```
-
-### 保存快捷指令
-
-1. 配置好要发送的 Topic 和 Payload
-2. 点击「存为指令」
-3. 输入指令名称（如：开灯、关灯）
-4. 在左侧「快捷指令」区域一键发送
-
-### 云同步设置
-
-1. 点击左下角「开启云同步」
-2. 输入或生成一个 Space ID
-3. 在其他设备使用相同 Space ID 即可同步
-
-### 开发者模式（事件中心）
-
-为保持界面简洁，右上角「事件中心（铃铛）」默认仅在开发者模式显示。
-
-开启方式：
-
-- 开发环境：运行 `npm run dev`（自动开启）
-- 正式/打包版：打开开发者工具（浏览器 F12；桌面版通常 `Ctrl+Shift+I`），在 Console 执行：
-
-```js
-localStorage.setItem('mqtt_dev_mode', '1');
-location.reload();
-```
-
-关闭方式：
-
-```js
-localStorage.removeItem('mqtt_dev_mode');
-location.reload();
-```
-
-## 项目结构
-
-```
-MQTT_Pro/
-├── src/
-│   ├── App.jsx        # 主应用组件
-│   ├── main.jsx       # 入口文件
-│   └── index.css      # 全局样式
-├── public/
-├── index.html
-├── package.json
-├── vite.config.js
-├── tailwind.config.js
-└── README.md
-```
-
-## 环境变量
-
-如需启用云同步功能，需要配置 Firebase：
-
-```javascript
-// 在运行环境中定义
-__firebase_config = JSON.stringify({
-  apiKey: "your-api-key",
-  authDomain: "your-project.firebaseapp.com",
-  projectId: "your-project-id",
-  // ...其他配置
-});
-__app_id = "your-app-id";
-```
-
-## 许可证
-
-本项目使用 **GNU AGPL v3**（`AGPL-3.0-only`），详见 `LICENSE`。
-
-- 允许使用、修改与分发，但要求在相同许可证下提供对应源代码。
-- 如将本项目作为网络服务对外提供使用（例如部署为在线服务），也需要向用户提供源代码（AGPL 的网络条款）。
-
-项目名称与 Logo 不在许可证授权范围内，见 `TRADEMARK.md`。
-
-## 命名（待定）
-
-当前项目名称尚未最终确定。作者 GitHub ID 为 `haxiox`，后续可能采用更具辨识度的命名（例如带 `hax`/`haxio` 前缀，或使用 `NeoMQTT` 等短名称）。
-
-欢迎在 Issue 中对项目命名与 Logo 提供建议。
+- 版本号：`vMAJOR.MINOR.PATCH`（例如 `v0.1.0`）
+- 打 Tag：`git tag v0.1.0 && git push origin v0.1.0`
+- GitHub Actions：本仓库提供 `.github/workflows/release.yml`，在打 Tag 后自动打包并上传安装包
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request！
+欢迎提交 Issue / PR。建议包含：复现步骤、期望行为、实际行为、截图或日志。
+
+## 路线图（时间轴） 🧭
+
+> 说明：以下为预计计划，可能根据优先级调整。
+
+- [x] 2025-12-25：项目起步（Web + Windows 桌面端）
+- [x] 2025-12-26：品牌与桌面端显示名统一为 “Northrealm（北境）”（已同步 `productName/appId`）
+- [ ] 2026-Q1：连接配置/订阅列表体验打磨（导入导出备份、搜索过滤、日志性能）
+- [ ] 2026-Q2：移动端（计划中，技术栈待定）
+- [ ] 2026-Q3：云同步（计划中：可选 Firebase / 自建后端方案二选一）
+
+## 许可证
+
+- 本项目源码采用 **GNU AGPL v3**（`AGPL-3.0-only`），详见 `LICENSE`
+- 项目名称与 Logo 不在许可证授权范围内，详见 `TRADEMARK.md`

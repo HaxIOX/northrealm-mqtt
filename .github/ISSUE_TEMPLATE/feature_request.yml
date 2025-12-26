@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest an idea for NR / Northrealm
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What do you want to add/change and why?
+      placeholder: Problem → proposal → alternatives
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope / acceptance criteria
+      description: How do we know it’s done?
+      placeholder: Checklist-style is welcome.
+    validations:
+      required: false
+
