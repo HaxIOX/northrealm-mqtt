@@ -63,23 +63,17 @@ npm ci
 npm run dev
 ```
 
-### Install fails (Electron download timeout)
+### If install fails (Electron download timeout)
 
 If you see `connect ETIMEDOUT ...:443`, it’s usually a **network timeout while downloading Electron binaries**, not a wrong command.
 
-On Windows PowerShell, set mirrors and retry:
+On Windows CMD, set mirrors and retry:
 
-```powershell
-$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
-$env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+```bat
+set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 npm ci
-```
-
-To make it persistent (restart your terminal):
-
-```powershell
-setx ELECTRON_MIRROR "https://npmmirror.com/mirrors/electron/"
-setx ELECTRON_BUILDER_BINARIES_MIRROR "https://npmmirror.com/mirrors/electron-builder-binaries/"
+npm run dev
 ```
 
 ## Desktop (Windows)
@@ -88,6 +82,11 @@ setx ELECTRON_BUILDER_BINARIES_MIRROR "https://npmmirror.com/mirrors/electron-bu
 npm run desktop:dev
 npm run desktop:build
 ```
+
+## Release assets (Windows)
+
+- Installer: `Northrealm Setup <version>.exe`
+- Portable: `Northrealm-portable-<version>-win-x64.zip` (generate with `npm run desktop:portable`, from `release/win-unpacked`)
 
 ## Roadmap 🧭
 

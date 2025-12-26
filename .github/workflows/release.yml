@@ -26,6 +26,9 @@ jobs:
       - name: Build desktop (Windows)
         run: npm run desktop:build
 
+      - name: Build portable zip (Windows)
+        run: npm run desktop:portable
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -34,3 +37,4 @@ jobs:
             release/*Setup*.exe
             release/latest.yml
             release/*.blockmap
+            release/*portable*.zip

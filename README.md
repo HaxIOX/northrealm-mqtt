@@ -33,7 +33,7 @@
 - Windows：Electron（`electron/main.cjs` + `electron/preload.cjs`）
 - MQTT：mqtt.js
 
-## Web / 桌面：协议支持差异  🪟🌐
+## Web / 桌面：协议支持差异  🌐
 
 | 平台 | 支持协议 | 说明 |
 |---|---|---|
@@ -50,37 +50,22 @@
 
 ## 快速开始
 
-```bash
-# 安装依赖
+安装依赖（推荐 `npm ci`）。如遇 Electron 下载超时，可在 Windows CMD 中设置镜像后再执行：
+
+```bat
+set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 npm ci
+```
 
-# Web 开发（http://localhost:5173）
+Web 开发 / 构建：
+
+```bash
 npm run dev
-
-# Web 构建（产物：dist/）
 npm run build
 ```
 
-### 安装依赖失败（Electron 下载超时）怎么办？
-
-你遇到的 `connect ETIMEDOUT ...:443` 通常是 **Electron 二进制下载被网络阻断/超时**，不是命令写错。
-
-在 Windows PowerShell 里先设置镜像，再安装：
-
-```powershell
-$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
-$env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
-npm ci
-```
-
-如果你想永久生效（需要重新打开终端）：
-
-```powershell
-setx ELECTRON_MIRROR "https://npmmirror.com/mirrors/electron/"
-setx ELECTRON_BUILDER_BINARIES_MIRROR "https://npmmirror.com/mirrors/electron-builder-binaries/"
-```
-
-### Windows 桌面端（开发/打包）
+## 桌面端（开发/打包）
 
 ```bash
 # 桌面端开发：并行启动 Vite + Electron
@@ -108,11 +93,16 @@ npm run desktop:build
 - 打 Tag：`git tag v0.1.0 && git push origin v0.1.0`
 - GitHub Actions：本仓库提供 `.github/workflows/release.yml`，在打 Tag 后自动打包并上传安装包
 
+### Windows 资产建议（上传到 GitHub Releases）
+
+- 安装版：`Northrealm Setup <version>.exe`
+- 便携版：`Northrealm-portable-<version>-win-x64.zip`（命令：`npm run desktop:portable`，会从 `release/win-unpacked` 生成）
+
 ## 贡献
 
 欢迎提交 Issue / PR。建议包含：复现步骤、期望行为、实际行为、截图或日志。
 
-## 路线图（时间轴） 🧭
+## 路线图（时间轴） 
 
 > 说明：以下为预计计划，可能根据优先级调整。
 
