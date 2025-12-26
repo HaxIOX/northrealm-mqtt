@@ -3,6 +3,9 @@
 [![Release](https://img.shields.io/github/v/release/HaxIOX/northrealm-mqtt?sort=semver)](https://github.com/HaxIOX/northrealm-mqtt/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/HaxIOX/northrealm-mqtt/ci.yml?branch=main)](https://github.com/HaxIOX/northrealm-mqtt/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/HaxIOX/northrealm-mqtt)](LICENSE)
+![Web](https://img.shields.io/badge/Web-Vite%20%2B%20React-646CFF)
+![Windows](https://img.shields.io/badge/Windows-Electron-47848F)
+![MQTT](https://img.shields.io/badge/MQTT-ws%2Fwss%20%7C%20mqtt%2Fmqtts-FF6F00)
 
 [简体中文](README.md) | [English](README.en.md)
 
