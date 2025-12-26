@@ -1,5 +1,9 @@
 # Northrealm (北境) · MQTT 调试器 / MQTT 客户端 🚀
 
+[![Release](https://img.shields.io/github/v/release/HaxIOX/northrealm-mqtt?sort=semver)](https://github.com/HaxIOX/northrealm-mqtt/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/HaxIOX/northrealm-mqtt/ci.yml?branch=main)](https://github.com/HaxIOX/northrealm-mqtt/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/HaxIOX/northrealm-mqtt)](LICENSE)
+
 [简体中文](README.md) | [English](README.en.md)
 
 简称：`NR`。
