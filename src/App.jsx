@@ -205,6 +205,8 @@ export default function MqttDebugger() {
   useEffect(() => { reconnectCountRef.current = reconnectCount; }, [reconnectCount]);
   const clientRef = useRef(null);
   useEffect(() => { clientRef.current = client; }, [client]);
+  const manualDisconnectRef = useRef(null);
+  const everConnectedRef = useRef(null);
 
   // 主题状态
   const [theme, setTheme] = useState(() => {
@@ -856,8 +858,11 @@ export default function MqttDebugger() {
     ) {
       return addLog('error', '', '你正在用 ws/wss 连接 1883/8883（这是 MQTT TCP/TLS 端口，不是 WebSocket 端口），请切换协议为 mqtt/mqtts');
     }
+    everConnectedRef.current = null;
+
     setReconnectCount(0);
     if (clientRef.current) {
+      manualDisconnectRef.current = clientRef.current;
       clientRef.current.end(true);
       clientRef.current = null;
     }
@@ -926,6 +931,7 @@ export default function MqttDebugger() {
 
       // 连接建立事件
       newClient.on('connect', (connack) => {
+        everConnectedRef.current = newClient;
         setConnectStatus('connected');
         setReconnectCount(0); // 重置重连计数
         addLog('system', '', '✅ 连接成功');
@@ -1009,13 +1015,21 @@ export default function MqttDebugger() {
 
       // 连接关闭事件
       newClient.on('close', () => {
-        const wasConnected = connectStatus === 'connected';
+        if (manualDisconnectRef.current === newClient) {
+          manualDisconnectRef.current = null;
+          if (everConnectedRef.current === newClient) everConnectedRef.current = null;
+          setConnectStatus('disconnected');
+          return;
+        }
+
+        const wasConnected = everConnectedRef.current === newClient;
+        if (everConnectedRef.current === newClient) everConnectedRef.current = null;
         setConnectStatus('disconnected');
         if (wasConnected) {
           addLog('system', '', '⚠️ 连接已断开');
         } else {
           addLog('system', '', '⚠️ 连接关闭（未成功建立连接）');
-          if (reconnectCount === 0) {
+          if (reconnectCountRef.current === 0) {
             addLog('error', '', '⚠️ TCP连接成功但MQTT握手失败，可能原因：');
             addLog('error', '', '  1. 用户名或密码错误（最常见）');
             addLog('error', '', '  2. ClientID 被拒绝或已被占用');
@@ -1118,6 +1132,7 @@ export default function MqttDebugger() {
     const currentClient = clientRef.current || client;
     if (currentClient) {
       // 强制结束连接，传入true表示不再重连
+      manualDisconnectRef.current = currentClient;
       currentClient.end(true);
       clientRef.current = null;
       setClient(null);
