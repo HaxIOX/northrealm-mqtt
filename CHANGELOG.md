@@ -4,6 +4,10 @@
 
 - (TBD)
 
+## 0.1.2 - 2025-12-26
+
+- Fix: `npm run desktop:dev` on Windows (avoid `spawn electron ENOENT` by resolving the Electron binary path)
+
 ## 0.1.1 - 2025-12-26
 
 - Docs: remove naming inspiration line

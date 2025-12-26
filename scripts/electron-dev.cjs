@@ -6,6 +6,21 @@ const POLL_MS = 250;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function resolveElectronBinary() {
+  try {
+    // In a Node.js process, `require('electron')` returns the path to the Electron binary.
+    // This is more reliable than spawning `electron` from PATH (Windows may only have electron.cmd).
+    const electronPath = require('electron');
+    if (typeof electronPath === 'string' && electronPath.length > 0) return electronPath;
+    throw new Error('Unexpected electron export');
+  } catch (e) {
+    const msg = String(e?.message || e);
+    throw new Error(
+      `Electron binary not found. Please run \`npm ci\` first.\nDetails: ${msg}`,
+    );
+  }
+}
+
 function checkDesktopMqttInstalled() {
   try {
     require.resolve('mqtt');
@@ -41,8 +56,9 @@ async function waitForDevServer() {
   const hasNativeMqtt = checkDesktopMqttInstalled();
   await waitForDevServer();
 
+  const electronBin = resolveElectronBinary();
   const child = spawn(
-    'electron',
+    electronBin,
     ['electron/main.cjs'],
     {
       stdio: 'inherit',
