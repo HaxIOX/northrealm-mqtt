@@ -1,156 +1,111 @@
-# MQTT Pro
+# Northrealm (北境) · MQTT 调试器 / MQTT 客户端 🚀
 
-一款现代化的 MQTT WebSocket 调试工具，支持云同步、主题切换、消息模板等高级功能。
+[![Release](https://img.shields.io/github/v/release/HaxIOX/northrealm-mqtt?sort=semver)](https://github.com/HaxIOX/northrealm-mqtt/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/HaxIOX/northrealm-mqtt/ci.yml?branch=main)](https://github.com/HaxIOX/northrealm-mqtt/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/HaxIOX/northrealm-mqtt)](LICENSE)
+![Web](https://img.shields.io/badge/Web-Vite%20%2B%20React-646CFF)
+![Windows](https://img.shields.io/badge/Windows-Electron-47848F)
+![MQTT](https://img.shields.io/badge/MQTT-ws%2Fwss%20%7C%20mqtt%2Fmqtts-FF6F00)
 
-## 功能特性
+[简体中文](README.md) | [English](README.en.md)
 
-### 核心功能
-- **MQTT 连接管理** - 支持 `ws://` 和 `wss://` WebSocket 协议
-- **订阅管理** - 支持多主题订阅，自动重订阅功能
-- **消息发布** - 支持 QoS 0/1/2，Retain 标志
-- **实时日志** - 消息收发实时显示，支持 TEXT/HEX 视图切换
-- **连接诊断** - 智能诊断连接错误，提供解决建议
+简称：`NR`。
 
-### 高级功能
-- **快捷指令** - 保存常用发布指令，一键发送
-- **消息模板变量** - 支持动态变量：`{{timestamp}}`、`{{datetime}}`、`{{random}}`、`{{count}}`、`{{uuid}}`
-- **定时发送** - 自定义间隔自动发送消息
-- **配置管理** - 保存/加载多个连接配置
+面向 IoT 开发/测试的 MQTT 工具：**Web 端（浏览器）+ Windows 桌面端（Electron）**，覆盖连接、订阅、发布、日志、快捷指令与定时发送。✨
 
-### 云同步
-- **多设备同步** - 基于 Firebase 的实时云同步
-- **Space ID** - 使用相同 Space ID 的设备自动同步配置和快捷指令
-- **本地优先** - 无 Firebase 配置时自动降级为本地模式
+> 命名灵感：**Northrealm（北境）** — 取自 2025-12-25（圣诞节）上线的仪式感与“消息流向北”的意象。
 
-### 界面特性
-- **双主题** - 支持深色/浅色主题切换
-- **响应式设计** - 现代化 UI，流畅动画
-- **快捷键支持**
-  - `Ctrl/Cmd + Enter` - 发送消息
-  - `Ctrl/Cmd + K` - 连接/断开
-  - `Ctrl/Cmd + D` - 断开连接
-  - `Ctrl/Cmd + L` - 清空日志
+## 亮点  ⭐
+
+- 配置可导入/导出：一键备份，迁移/分享更省心（可选“含密码导出”，**明文**，请妥善保管）
+- 快捷指令：保存常用发布，一键发送（不用来回复制粘贴）
+- 双端覆盖：Web 端（`ws/wss`）+ Windows 桌面端（额外支持 `mqtt/mqtts` 直连 1883/8883）
+
+## 功能
+
+- 连接管理：多配置保存/切换、自动重连、连接诊断
+- 本地备份：配置/快捷指令一键导入/导出（可选“含密码导出”，明文）
+- 订阅/发布：QoS 0/1/2、Retain、通配符 `#`/`+`
+- 日志与视图：收发实时展示、TEXT/HEX 切换
+- 快捷指令：保存常用发布，一键发送
 
 ## 技术栈
 
-- **前端框架**: React 18
-- **构建工具**: Vite
-- **样式方案**: Tailwind CSS
-- **图标库**: Lucide React
-- **MQTT 客户端**: mqtt.js v5.3.5
-- **云服务**: Firebase (Auth + Firestore)
+- Web：Vite + React + Tailwind CSS
+- Windows：Electron（`electron/main.cjs` + `electron/preload.cjs`）
+- MQTT：mqtt.js
+
+## Web / 桌面：协议支持差异  🪟🌐
+
+| 平台 | 支持协议 | 说明 |
+|---|---|---|
+| Web（浏览器） | `ws://` / `wss://` | 浏览器无法直连 TCP，因此不支持 `mqtt://`/`mqtts://` |
+| Windows 桌面端（Electron） | `ws://` / `wss://` / `mqtt://` / `mqtts://` | `preload` 在 Node 环境 `require('mqtt')` 并注入到 `window.mqtt` |
+
+桌面端诊断日志：
+- `%TEMP%\\mqtt-pro-diagnostics\\main.log`
+- `%TEMP%\\mqtt-pro-diagnostics\\preload.log`
+
+## 环境要求
+
+- Node.js：`^20.19.0 || >=22.12.0`（Vite 7 要求）
 
 ## 快速开始
 
-### 安装依赖
-
 ```bash
-npm install
-```
+# 安装依赖
+npm ci
 
-### 启动开发服务器
-
-```bash
+# Web 开发（http://localhost:5173）
 npm run dev
-```
 
-### 构建生产版本
-
-```bash
+# Web 构建（产物：dist/）
 npm run build
 ```
 
-## 使用指南
+### Windows 桌面端（开发/打包）
 
-### 连接 MQTT 服务器
+```bash
+# 桌面端开发：并行启动 Vite + Electron
+npm run desktop:dev
 
-1. 在左侧「连接配置」面板中输入服务器信息
-2. 选择协议（ws/wss），端口会自动适配
-3. 填写 Path（通常为 `/mqtt`）
-4. 可选填写用户名和密码
-5. 点击「连接」按钮
+# 桌面端打包（Windows）：产物输出到 release/
+npm run desktop:build
+```
 
-### 预设公共服务器
+> 说明：打包后的 Windows 程序显示名来自 `package.json` 的 `build.productName`（当前为 `Northrealm`）。后续如需进一步统一图标/签名等，可再补齐。
 
-| 服务器 | Host | WS 端口 | WSS 端口 | Path |
-|--------|------|---------|----------|------|
+## 公共 Broker 预设（示例）
+
+| 服务商 | Host | WS | WSS | Path |
+|---|---:|---:|---:|---|
 | EMQX | broker.emqx.io | 8083 | 8084 | /mqtt |
 | HiveMQ | broker.hivemq.com | 8000 | 8884 | /mqtt |
 | Mosquitto | test.mosquitto.org | 8080 | 8081 | (空) |
 
-### 订阅主题
+## Release（开源建议） 📦
 
-1. 在「订阅监控」区域输入主题
-2. 支持通配符：`#`（多级）、`+`（单级）
-3. 点击「订阅」或按 Enter
+为了让用户不必自己装环境，建议用 GitHub Release 分发：
 
-### 发布消息
-
-1. 在底部发布区域输入 Topic
-2. 选择 QoS 等级和 Retain 选项
-3. 在文本框中输入消息内容
-4. 点击「发送」或按 `Ctrl+Enter`
-
-### 使用消息模板
-
-在消息中使用变量，发送时会自动替换：
-
-```json
-{
-  "timestamp": {{timestamp}},
-  "id": "{{uuid}}",
-  "seq": {{count}}
-}
-```
-
-### 保存快捷指令
-
-1. 配置好要发送的 Topic 和 Payload
-2. 点击「存为指令」
-3. 输入指令名称（如：开灯、关灯）
-4. 在左侧「快捷指令」区域一键发送
-
-### 云同步设置
-
-1. 点击左下角「开启云同步」
-2. 输入或生成一个 Space ID
-3. 在其他设备使用相同 Space ID 即可同步
-
-## 项目结构
-
-```
-MQTT_Pro/
-├── src/
-│   ├── App.jsx        # 主应用组件
-│   ├── main.jsx       # 入口文件
-│   └── index.css      # 全局样式
-├── public/
-├── index.html
-├── package.json
-├── vite.config.js
-├── tailwind.config.js
-└── README.md
-```
-
-## 环境变量
-
-如需启用云同步功能，需要配置 Firebase：
-
-```javascript
-// 在运行环境中定义
-__firebase_config = JSON.stringify({
-  apiKey: "your-api-key",
-  authDomain: "your-project.firebaseapp.com",
-  projectId: "your-project-id",
-  // ...其他配置
-});
-__app_id = "your-app-id";
-```
-
-## 许可证
-
-MIT License
+- 版本号：`vMAJOR.MINOR.PATCH`（例如 `v0.1.0`）
+- 打 Tag：`git tag v0.1.0 && git push origin v0.1.0`
+- GitHub Actions：本仓库提供 `.github/workflows/release.yml`，在打 Tag 后自动打包并上传安装包
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request！
+欢迎提交 Issue / PR。建议包含：复现步骤、期望行为、实际行为、截图或日志。
+
+## 路线图（时间轴） 🧭
+
+> 说明：以下为预计计划，可能根据优先级调整。
+
+- [x] 2025-12-25：项目起步（Web + Windows 桌面端）
+- [x] 2025-12-26：品牌与桌面端显示名统一为 “Northrealm（北境）”（已同步 `productName/appId`）
+- [ ] 2026-Q1：连接配置/订阅列表体验打磨（导入导出备份、搜索过滤、日志性能）
+- [ ] 2026-Q2：移动端（计划中，技术栈待定）
+- [ ] 2026-Q3：云同步（计划中：可选 Firebase / 自建后端方案二选一）
+
+## 许可证
+
+- 本项目源码采用 **GNU AGPL v3**（`AGPL-3.0-only`），详见 `LICENSE`
+- 项目名称与 Logo 不在许可证授权范围内，详见 `TRADEMARK.md`

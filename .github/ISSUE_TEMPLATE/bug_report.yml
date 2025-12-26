@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a problem (NR / Northrealm)
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Please do **not** paste secrets (passwords/tokens/private brokers).
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect?
+      placeholder: Steps / expected / actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Paste relevant logs or screenshots (remove secrets).
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: e.g. 0.0.3 / v0.1.0
+    validations:
+      required: false
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: Web (Chrome/Edge) / Windows Desktop
+    validations:
+      required: false
+
