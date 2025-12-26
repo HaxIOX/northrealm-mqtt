@@ -114,6 +114,11 @@ export default function MqttDebugger() {
   // --- 数据状态 ---
   const [savedConfigs, setSavedConfigs] = useState([]);
   const [quickActions, setQuickActions] = useState([]);
+  const savedConfigsRef = useRef(savedConfigs);
+  savedConfigsRef.current = savedConfigs;
+  const quickActionsRef = useRef(quickActions);
+  quickActionsRef.current = quickActions;
+  const saveToCloudRef = useRef(null);
 
   // --- 编辑/运行状态 ---
   const [connection, setConnection] = useState(() => {
@@ -207,6 +212,9 @@ export default function MqttDebugger() {
   useEffect(() => { clientRef.current = client; }, [client]);
   const manualDisconnectRef = useRef(null);
   const everConnectedRef = useRef(null);
+  const handleConnectRef = useRef(null);
+  const handleDisconnectRef = useRef(null);
+  const handlePublishRef = useRef(null);
 
   // 主题状态
   const [theme, setTheme] = useState(() => {
@@ -423,7 +431,7 @@ export default function MqttDebugger() {
 
           applyPayload(data);
         } else {
-          saveToCloud(savedConfigs, quickActions, lastSubscriptionsRef.current);
+          saveToCloudRef.current?.(savedConfigsRef.current, quickActionsRef.current, lastSubscriptionsRef.current);
         }
       }, (error) => {
         console.error("Sync error:", error);
@@ -476,6 +484,7 @@ export default function MqttDebugger() {
       }
     } catch { addLog('error', '', '云端保存失败'); }
   };
+  saveToCloudRef.current = saveToCloud;
 
   const updateData = (type, newData) => {
     if (type === 'configs') {
@@ -1182,6 +1191,10 @@ export default function MqttDebugger() {
     });
   };
 
+  handleConnectRef.current = handleConnect;
+  handleDisconnectRef.current = handleDisconnect;
+  handlePublishRef.current = handlePublish;
+
   // 定时发送控制
   const toggleTimer = () => {
     if (timerEnabled) {
@@ -1234,12 +1247,12 @@ export default function MqttDebugger() {
       // Ctrl/Cmd + Enter: 发送消息
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
-        handlePublish();
+        handlePublishRef.current?.();
       }
       // Ctrl/Cmd + D: 断开连接
       if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
         e.preventDefault();
-        if (connectStatus === 'connected') handleDisconnect();
+        if (connectStatus === 'connected') handleDisconnectRef.current?.();
       }
       // Ctrl/Cmd + L: 清空日志
       if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
@@ -1250,10 +1263,10 @@ export default function MqttDebugger() {
       // Ctrl/Cmd + K: 连接/断开切换
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
-        if (connectStatus === 'connected') handleDisconnect();
-        else if (connectStatus === 'connecting') handleDisconnect();
-        else if (reconnectCount > 0) handleDisconnect();
-        else if (connectStatus !== 'connecting') handleConnect();
+        if (connectStatus === 'connected') handleDisconnectRef.current?.();
+        else if (connectStatus === 'connecting') handleDisconnectRef.current?.();
+        else if (reconnectCount > 0) handleDisconnectRef.current?.();
+        else if (connectStatus !== 'connecting') handleConnectRef.current?.();
       }
     };
 
