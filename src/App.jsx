@@ -221,7 +221,7 @@ export default function MqttDebugger() {
 
   // 主题配色
   const t = theme === 'light' ? {
-    // 亮色主题 (参考 houtai.html)
+  // 亮色主题
     bg: 'bg-[#F8FAFC]',
     bgSecondary: 'bg-white',
     bgTertiary: 'bg-slate-50',
