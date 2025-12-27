@@ -1,4 +1,6 @@
-# Northrealm (北境) · MQTT Debugger / MQTT Client 🚀
+# Northrealm (北境) · MQTT Debugger / MQTT Client
+
+This file mirrors `README.md` (default English).
 
 [![Release](https://img.shields.io/github/v/release/HaxIOX/northrealm-mqtt?sort=semver)](https://github.com/HaxIOX/northrealm-mqtt/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/HaxIOX/northrealm-mqtt/ci.yml?branch=main)](https://github.com/HaxIOX/northrealm-mqtt/actions/workflows/ci.yml)
@@ -7,25 +9,17 @@
 ![Windows](https://img.shields.io/badge/Windows-Electron-47848F)
 ![MQTT](https://img.shields.io/badge/MQTT-ws%2Fwss%20%7C%20mqtt%2Fmqtts-FF6F00)
 
-[简体中文](README.md) | [English](README.en.md)
+[English](README.md) | [简体中文](README.zh-CN.md)
 
 Short name: `NR`.
 
-An MQTT tool for IoT development/testing: **Web (browser) + Windows Desktop (Electron)**. Connect, subscribe, publish, inspect logs, and schedule publishes. ✨
+An MQTT tool for IoT development/testing: **Web (browser) + Windows Desktop (Electron)**. Connect, subscribe, publish, inspect logs, and schedule publishes.
 
-Name/Logo usage rules: `TRADEMARK.md`.
-
-## Highlights ⭐
+## Highlights
 
 - Backup import/export: export configs with one click (optional “export with passwords” — **plaintext**, handle carefully)
 - Quick actions: save common publishes and send in one click (no more repetitive copy/paste)
 - Web + Windows: Web uses `ws/wss`; Desktop additionally supports `mqtt/mqtts` (1883/8883)
-
-## At a glance
-
-- What it is: an **MQTT debugger/client**
-- Platforms: Web (`ws/wss`) + Windows Desktop (`ws/wss` + `mqtt/mqtts`)
-- Store subtitle suggestions: `MQTT Debugger` / `MQTT Client`
 
 ## Features
 
@@ -35,28 +29,32 @@ Name/Logo usage rules: `TRADEMARK.md`.
 - Live logs, TEXT/HEX view
 - Quick actions: save common publishes and send with one click
 
-## Tech stack
+## Protocol support (Web vs Desktop)
 
-- Web: Vite + React + Tailwind CSS
-- Windows: Electron (`electron/main.cjs` + `electron/preload.cjs`)
-- MQTT: mqtt.js
+- ☑ MQTT protocol versions: 3.1 / 3.1.1 / 5.0
+- ☑ WebSocket: `ws://` / `wss://` (Web & Desktop)
+- ☑ TCP: `mqtt://` / `mqtts://` (Desktop only)
 
-## Protocol support (Web vs Desktop) 🪟🌐
+Notes:
 
-| Platform | Protocols | Notes |
-|---|---|---|
-| Web | `ws://` / `wss://` | Browsers can't open raw TCP sockets |
-| Windows Desktop | `ws://` / `wss://` / `mqtt://` / `mqtts://` | Preload injects `mqtt` into `window.mqtt` |
+- Browsers can’t open raw TCP sockets, so the Web build only supports `ws/wss`.
 
-Desktop diagnostics logs:
-- `%TEMP%\\mqtt-pro-diagnostics\\main.log`
-- `%TEMP%\\mqtt-pro-diagnostics\\preload.log`
+## Preview
+
+![image-20251227203752551](assets/image-20251227203752551.png)
+
+![image-20251227203803561](assets/image-20251227203803561.png)
+
+![image-20251227203820626](assets/image-20251227203820626.png)
 
 ## Requirements
 
 - Node.js: `^20.19.0 || >=22.12.0` (required by Vite 7)
 
 ## Quick start
+
+- Web: [nrmqtt.haxio.de](https://nrmqtt.haxio.de/)
+- Download portable Windows client: [Release v0.1.3](https://github.com/HaxIOX/northrealm-mqtt/releases/tag/v0.1.3)
 
 ```bash
 npm ci
@@ -73,30 +71,32 @@ On Windows CMD, set mirrors and retry:
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 npm ci
-npm run dev
 ```
 
 ## Desktop (Windows)
 
 ```bash
+# Run Vite + Electron together
 npm run desktop:dev
+
+# Build installer (outputs to release/)
 npm run desktop:build
+```
+
+Portable zip:
+
+```bash
+npm run desktop:portable
 ```
 
 ## Release assets (Windows)
 
 - Installer: `Northrealm Setup <version>.exe`
-- Portable: `Northrealm-portable-<version>-win-x64.zip` (generate with `npm run desktop:portable`, from `release/win-unpacked`)
+- Portable: `Northrealm-portable-<version>-win-x64.zip`
 
-## Roadmap 🧭
+## Git / Packaging / Actions doc
 
-> Note: dates are estimates and may change.
-
-- [x] 2025-12-25: Project kickoff (Web + Windows Desktop)
-- [x] 2025-12-26: Align desktop display name as “Northrealm (北境)” (productName/appId)
-- [ ] 2026-Q1: UX improvements (backup import/export, search/filter, log performance)
-- [ ] 2026-Q2: Mobile app (planned; tech stack TBD)
-- [ ] 2026-Q3: Cloud sync (planned: optional Firebase or self-hosted backend)
+See: `docs/GIT_WORKFLOW.md`
 
 ## License
 
