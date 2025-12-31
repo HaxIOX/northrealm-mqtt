@@ -4,6 +4,11 @@
 
 - (TBD)
 
+## 0.1.4 - 2025-12-31
+
+- Fix: fallback to bundled MQTT SDK when desktop preload is missing (no CDN dependency)
+- Fix: validate connection params (host/port/path/clientId) to prevent common connection mistakes
+
 ## 0.1.3 - 2025-12-26
 
 - Fix: avoid showing MQTT handshake failure diagnostics when the user manually disconnects
