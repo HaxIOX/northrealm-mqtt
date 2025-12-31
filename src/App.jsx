@@ -274,74 +274,90 @@ export default function MqttDebugger() {
 
   // --- 初始化逻辑 ---
   useEffect(() => {
-    // 延迟检查，确保preload已完成
-    const checkMqtt = () => {
-      if (window.mqtt) {
-        const source = window.__MQTT_PRO_MQTT_SOURCE__ || 'unknown';
-        const isNative = source === 'native';
+    let canceled = false;
 
-        console.log('[App] 检测到 window.mqtt');
-        console.log('[App] MQTT来源:', source, isNative ? '(Node原生版，支持TCP)' : '(CDN浏览器版，仅支持WebSocket)');
+    const normalizeMqttModule = (mod) => {
+      const candidate = mod?.default ?? mod;
+      if (candidate && typeof candidate.connect === 'function') return candidate;
+      if (mod && typeof mod.connect === 'function') return mod;
+      return null;
+    };
 
-        if (isNative) {
-          console.log('[App] ✅ 使用Node原生MQTT，支持 mqtt:// 协议');
-        } else {
-          console.log('[App] ⚠️  使用CDN版本MQTT，仅支持 ws:// 和 wss:// 协议');
-        }
+    const applyMqttLib = (mqttLib, sourceLabel) => {
+      if (!mqttLib || typeof mqttLib.connect !== 'function') return false;
 
-        setSdkReady(true);
-        return true;
+      try {
+        if (!window.mqtt) window.mqtt = mqttLib;
+      } catch {
+        // ignore
       }
-      return false;
+
+      try {
+        if (window.__MQTT_PRO_MQTT_SOURCE__ !== 'native') window.__MQTT_PRO_MQTT_SOURCE__ = sourceLabel;
+        if (!window.__MQTT_PRO_MQTT_VERSION__ && mqttLib.VERSION) window.__MQTT_PRO_MQTT_VERSION__ = mqttLib.VERSION;
+      } catch {
+        // ignore
+      }
+
+      setSdkReady(true);
+      return true;
+    };
+
+    const checkMqtt = () => {
+      const hasConnect = !!window.mqtt && typeof window.mqtt.connect === 'function';
+      if (!hasConnect) return false;
+
+      const source = window.__MQTT_PRO_MQTT_SOURCE__ || 'unknown';
+      const isNative = source === 'native';
+
+      console.log('[App] 检测到 window.mqtt');
+      console.log('[App] MQTT来源:', source, isNative ? '(Node原生版，支持TCP)' : '(浏览器版，仅支持WebSocket)');
+      console.log(isNative ? '[App] ✅ 使用Node原生MQTT，支持 mqtt:// 协议' : '[App] ⚠️  使用浏览器版MQTT，仅支持 ws:// 和 wss:// 协议');
+
+      setSdkReady(true);
+      return true;
+    };
+
+    const loadBundledMqtt = async () => {
+      try {
+        const mod = await import('mqtt');
+        if (canceled) return;
+        const mqttLib = normalizeMqttModule(mod);
+        if (!mqttLib) throw new Error('Bundled mqtt module has no connect()');
+        applyMqttLib(mqttLib, 'bundled');
+      } catch (e) {
+        console.error('[App] 内置 MQTT SDK 加载失败:', e);
+        alert('MQTT 库加载失败（内置模块）。请刷新重试或检查构建产物是否完整。');
+      }
     };
 
     // 立即检查一次
-    if (checkMqtt()) {
-      return;
-    }
+    if (checkMqtt()) return () => { canceled = true; };
 
-    // 桌面环境但 mqtt 还没加载：等待 preload 注入（或降级为 CDN 版本，仅支持 ws/wss）
+    // 桌面环境但 mqtt 还没加载：等待 preload 注入（若失败则降级为内置浏览器版，仅支持 ws/wss）
     if (isDesktopShell) {
       console.log('[App] 桌面环境，等待 preload 注入 mqtt...');
 
-      // 等待最多1秒让preload完成
       const waitTimer = setTimeout(() => {
-        if (checkMqtt()) {
-          console.log('[App] ✅ Preload mqtt加载成功');
-          return;
-        }
+        if (checkMqtt()) return;
 
-        console.warn('[App] ⚠️  Preload超时，降级使用CDN版本（不支持mqtt://协议）');
+        console.warn('[App] ⚠️  Preload 未检测到，降级使用内置浏览器版 MQTT（不支持 mqtt:// 协议）');
         if (window.__MQTT_PRO_DESKTOP__ !== true && !window.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__) {
           const mainInfo = window.__MQTT_PRO_MAIN_INFO__ ? ` main=${JSON.stringify(window.__MQTT_PRO_MAIN_INFO__)}` : '';
           window.__MQTT_PRO_DESKTOP_PRELOAD_ERROR__ = `preload 未检测到（可能运行了旧版本/未正确安装/主进程未配置 preload）${mainInfo}`;
         }
-        loadCdnMqtt();
+        loadBundledMqtt();
       }, 1000);
 
-      return () => clearTimeout(waitTimer);
+      return () => {
+        canceled = true;
+        clearTimeout(waitTimer);
+      };
     }
 
-    // 浏览器环境，直接加载CDN版本
-    console.log('[App] 浏览器环境，加载CDN版本MQTT');
-    loadCdnMqtt();
-
-    function loadCdnMqtt() {
-      console.log('[App] 加载 CDN 版本 MQTT 库（仅支持WebSocket）');
-      const script = document.createElement('script');
-      script.src = "https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js";
-      script.async = true;
-      script.onload = () => {
-        console.log('[App] CDN MQTT SDK 加载成功');
-        if (window.__MQTT_PRO_MQTT_SOURCE__ !== 'native') window.__MQTT_PRO_MQTT_SOURCE__ = 'cdn';
-        setSdkReady(true);
-      };
-      script.onerror = (e) => {
-        console.error('[App] MQTT SDK 加载失败:', e);
-        alert('MQTT 库加载失败，请检查网络连接或使用离线版本');
-      };
-      document.body.appendChild(script);
-    }
+    // 浏览器环境：直接使用内置模块（不依赖网络）
+    loadBundledMqtt();
+    return () => { canceled = true; };
   }, [isDesktopShell]);
 
   useEffect(() => {
@@ -844,6 +860,36 @@ export default function MqttDebugger() {
     if (!isDesktopShell && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
       return addLog('error', '', '浏览器不支持 mqtt://（1883）直连，请使用 ws/wss 或使用桌面版');
     }
+
+    const host = String(connection.host || '').trim();
+    if (!host) {
+      return addLog('error', '', 'Host 不能为空（仅填写域名或 IP，不要带协议前缀）');
+    }
+    if (host.includes('://') || host.includes('/') || host.includes('?') || host.includes('#')) {
+      return addLog('error', '', 'Host 格式不正确：只填域名或 IP（不要包含协议/路径/参数），例如 broker.emqx.io');
+    }
+    if (host.includes(':') && !host.startsWith('[')) {
+      return addLog('error', '', 'Host 请不要包含端口号（端口请填在 Port），IPv6 请使用方括号，例如 [::1]');
+    }
+
+    const port = Number(connection.port);
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      return addLog('error', '', '端口号无效：请输入 1~65535 的数字');
+    }
+
+    let wsPath = String(connection.path || '').trim();
+    if ((connection.protocol === 'ws' || connection.protocol === 'wss') && wsPath) {
+      if (!wsPath.startsWith('/')) wsPath = `/${wsPath}`;
+    }
+
+    if (
+      !isDesktopShell &&
+      (connection.protocol === 'ws' || connection.protocol === 'wss') &&
+      (port === 1883 || port === 8883)
+    ) {
+      return addLog('error', '', '你正在用 ws/wss 连接 1883/8883（这是 MQTT TCP/TLS 端口，不是 WebSocket 端口）。浏览器请改用 8083/8084 + /mqtt，或使用桌面版的 mqtt/mqtts。');
+    }
+
     const tcpCapableNow = getDesktopTcpCapable();
     if ((connection.protocol === 'mqtt' || connection.protocol === 'mqtts') && !tcpCapableNow) {
       const sourceNow = window.__MQTT_PRO_MQTT_SOURCE__ || 'unknown';
@@ -877,8 +923,8 @@ export default function MqttDebugger() {
     }
     if (client) { setClient(null); }
     setConnectStatus('connecting');
-    const pathPart = (connection.protocol === 'ws' || connection.protocol === 'wss') ? connection.path : '';
-    const url = `${connection.protocol}://${connection.host}:${connection.port}${pathPart}`;
+    const pathPart = (connection.protocol === 'ws' || connection.protocol === 'wss') ? wsPath : '';
+    const url = `${connection.protocol}://${host}:${port}${pathPart}`;
     addLog('system', '', `正在连接 ${url}...`);
 
     // 添加调试信息
@@ -897,7 +943,7 @@ export default function MqttDebugger() {
       const source = window.__MQTT_PRO_MQTT_SOURCE__ || 'unknown';
       const isNative = source === 'native';
 
-      addLog('system', '', `MQTT来源: ${source === 'native' ? 'Node原生(支持TCP)' : source === 'cdn' ? 'CDN浏览器版(仅WebSocket)' : '未知'}`);
+      addLog('system', '', `MQTT来源: ${source === 'native' ? 'Node原生(支持TCP)' : source === 'bundled' ? '内置浏览器版(仅WebSocket)' : source === 'cdn' ? 'CDN浏览器版(仅WebSocket)' : '未知'}`);
       addLog('system', '', `MQTT版本: ${window.__MQTT_PRO_MQTT_VERSION__ || 'unknown'}`);
 
       if (!isNative && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
@@ -920,16 +966,35 @@ export default function MqttDebugger() {
     }
 
     try {
+      let clientId = String(connection.clientId || '').trim();
+      if (!clientId) {
+        clientId = `mqtt_client_${Math.random().toString(16).slice(2, 10)}`;
+        setConnection((prev) => ({ ...prev, clientId }));
+        addLog('system', '', `⚠️ ClientID 为空，已自动生成: ${clientId}`);
+      }
+
+      let keepalive = Number(advancedConfig.keepalive);
+      if (!Number.isFinite(keepalive) || keepalive < 0) {
+        keepalive = 60;
+        addLog('system', '', '⚠️ keepalive 无效，已使用默认值 60');
+      }
+
+      let protocolVersion = Number(advancedConfig.protocolVersion);
+      if (![3, 4, 5].includes(protocolVersion)) {
+        protocolVersion = 4;
+        addLog('system', '', '⚠️ MQTT 协议版本无效，已使用默认值 3.1.1（v4）');
+      }
+
       const opts = {
-        clientId: connection.clientId,
+        clientId,
         username: connection.username,
         password: connection.password,
         clean: advancedConfig.clean,
-        keepalive: Number(advancedConfig.keepalive),
+        keepalive,
         connectTimeout: 10000,      // 增加到10秒
         reconnectPeriod: autoReconnect ? 3000 : 0,
-        protocolId: advancedConfig.protocolVersion === 3 ? 'MQIsdp' : 'MQTT',
-        protocolVersion: Number(advancedConfig.protocolVersion)
+        protocolId: protocolVersion === 3 ? 'MQIsdp' : 'MQTT',
+        protocolVersion,
       };
       if (advancedConfig.willEnabled) opts.will = { topic: advancedConfig.willTopic, payload: advancedConfig.willPayload, qos: Number(advancedConfig.willQos), retain: advancedConfig.willRetain };
 
