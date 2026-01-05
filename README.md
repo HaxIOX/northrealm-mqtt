@@ -11,7 +11,7 @@
 
 Short name: `NR`.
 
-An MQTT tool for IoT development/testing: **Web (browser) + Windows Desktop (Electron)**. Connect, subscribe, publish, inspect logs, and schedule publishes.
+An MQTT tool for IoT development/testing: **Web (browser) + Windows Desktop (Electron)**. Connect, subscribe, publish, inspect logs, filter by topic, and schedule publishes.
 
 ## Highlights
 
@@ -24,6 +24,8 @@ An MQTT tool for IoT development/testing: **Web (browser) + Windows Desktop (Ele
 - Connection profiles, auto-reconnect, connection diagnostics
 - Local backup: one-click import/export (optional “export with passwords” in plaintext)
 - Subscribe/publish: QoS 0/1/2, Retain, wildcards `#` / `+`
+- Topic filter: click subscription topics in the left panel to multi-select filters; message logs only show topics that match (supports `#` / `+`), and can be cleared with one click
+- Scheduled publish: repeatedly publish the current message to the target topic at the configured interval until stopped
 - Live logs, TEXT/HEX view
 - Quick actions: save common publishes and send with one click
 

@@ -13,29 +13,21 @@
 
 面向 IoT 开发与测试的 MQTT 工具：**Web 端（浏览器）+ Windows 桌面端（Electron）**，覆盖连接、订阅、发布、日志、快捷指令与定时发送。
 
-## 亮点
-
-- 配置可导入/导出：一键备份，迁移/分享更省心（可选“含密码导出”，**明文**，请妥善保管）
-- 快捷指令：保存常用发布，一键发送（避免反复复制粘贴）
-- 双端覆盖：Web 端（`ws/wss`）+ Windows 桌面端（额外支持 `mqtt/mqtts` 直连 1883/8883）
-
 ## 功能
 
-- 连接管理：多配置保存/切换、自动重连、连接诊断
-- 本地备份：配置/快捷指令一键导入/导出（可选“含密码导出”，明文）
+- 连接管理：多配置保存/切换、自动重连
+- 配置可导入/导出：一键备份，迁移
+- 快捷指令：保存常用发布，一键发送（避免反复复制粘贴）
+- 主题筛选：点击左侧订阅主题可多选筛选，消息日志仅显示匹配所选主题（支持 #/+ 通配符），并可一键取消筛选。
+- 定时发送：按设定间隔自动重复发布当前消息到指定 Topic，直到手动停止
 - 订阅/发布：QoS 0/1/2、Retain、通配符 `#`/`+`
 - 日志与视图：收发实时展示、TEXT/HEX 切换
-- 快捷指令：保存常用发布，一键发送
 
-## 支持协议（Web vs Desktop）
+## 支持协议
 
 - ☑ MQTT 协议版本：3.1 / 3.1.1 / 5.0
-- ☑ WebSocket：`ws://` / `wss://`（Web & Desktop）
-- ☑ TCP：`mqtt://` / `mqtts://`（仅 Desktop）
-
-说明：
-
-- Web（浏览器）无法直接访问原生 TCP Socket，因此 Web 端只能走 `ws/wss`
+- ☑ WebSocket：`ws://` / `wss://`
+- ☑ TCP：`mqtt://` / `mqtts://`（仅客户端）
 
 ## 应用预览
 
@@ -54,7 +46,7 @@
 - web端：[nrmqtt.haxio.de](https://nrmqtt.haxio.de/)
 - 下载便携式windows客户端：[Release v0.1.3](https://github.com/HaxIOX/northrealm-mqtt/releases/tag/v0.1.3)
 
-安装依赖（推荐 `npm ci`）。如遇 Electron 下载超时，可在 Windows CMD 中设置镜像后再执行：
+安装依赖（推荐 `npm ci`），如遇 Electron 下载超时，可在 Windows CMD 中设置镜像后再执行：
 
 ```bat
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
@@ -62,7 +54,7 @@ set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-buil
 npm ci
 ```
 
-Web 开发 / 构建：
+Web 构建：
 
 ```bash
 npm run dev
@@ -79,7 +71,7 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
-便携版（portable）：
+便携版：
 
 ```bash
 npm run desktop:portable

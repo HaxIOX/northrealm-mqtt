@@ -4,6 +4,13 @@
 
 - (TBD)
 
+## 0.1.5 - 2026-01-05
+
+- Feature: topic filter for message logs (multi-select subscription topics, supports `#`/`+`, one-click clear)
+- Fix: scheduled publish interval input is now freely editable
+- Feature: export message logs (filtered/all) as JSON
+- Docs: sync English README with latest CN README
+
 ## 0.1.4 - 2025-12-31
 
 - Fix: fallback to bundled MQTT SDK when desktop preload is missing (no CDN dependency)

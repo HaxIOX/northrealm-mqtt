@@ -168,6 +168,15 @@ export default function MqttDebugger() {
   // 日志
   const [logs, setLogs] = useState([]);
   const [logFilter, setLogFilter] = useState('');
+  const [logTopicFilters, setLogTopicFilters] = useState(() => {
+    try {
+      const raw = localStorage.getItem('mqtt_log_topic_filters');
+      const parsed = JSON.parse(raw || '[]');
+      return Array.isArray(parsed) ? parsed.filter((s) => typeof s === 'string' && s.trim()) : [];
+    } catch {
+      return [];
+    }
+  });
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [logViewMode, setLogViewMode] = useState('text');
   const logsEndRef = useRef(null);
@@ -191,6 +200,14 @@ export default function MqttDebugger() {
     }
   }, [debugPacketLog]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('mqtt_log_topic_filters', JSON.stringify(logTopicFilters));
+    } catch {
+      // ignore
+    }
+  }, [logTopicFilters]);
+
   // 事件中心：集中展示 system/error/debug（默认只在主视图显示 sent/received）
   const [eventCenterOpen, setEventCenterOpen] = useState(false);
   const [eventFilter, setEventFilter] = useState('');
@@ -201,6 +218,7 @@ export default function MqttDebugger() {
   // 定时发送
   const [timerEnabled, setTimerEnabled] = useState(false);
   const [timerInterval, setTimerInterval] = useState(1000);
+  const [timerIntervalInput, setTimerIntervalInput] = useState('1000');
   const timerRef = useRef(null);
 
   // 自动重订阅
@@ -543,6 +561,40 @@ export default function MqttDebugger() {
     URL.revokeObjectURL(url);
   };
 
+  const safeJsonValue = (v) => {
+    try {
+      JSON.stringify(v);
+      return v;
+    } catch {
+      return String(v);
+    }
+  };
+
+  const buildMessageLogsExportPayload = (scope, exportLogs) => {
+    const safeLogs = (exportLogs || []).map((l) => ({
+      id: l?.id ?? null,
+      timestamp: l?.timestamp ?? '',
+      type: l?.type ?? '',
+      topic: l?.topic ?? '',
+      payload: safeJsonValue(l?.payload),
+      details: safeJsonValue(l?.details),
+    }));
+
+    return {
+      schema: 'mqtt-pro-message-logs',
+      v: 1,
+      scope,
+      exportedAt: new Date().toISOString(),
+      appVersion: (typeof window !== 'undefined' && window.__MQTT_PRO_APP_VERSION__) ? window.__MQTT_PRO_APP_VERSION__ : 'unknown',
+      filters: {
+        topicFilters: logTopicFilters || [],
+        text: logFilter || '',
+      },
+      count: safeLogs.length,
+      data: safeLogs,
+    };
+  };
+
   const buildBackupPayload = (includePasswords) => {
     const safeConfigs = (savedConfigs || []).map((c) => ({
       ...c,
@@ -560,6 +612,40 @@ export default function MqttDebugger() {
         subscriptions: subscriptions || [],
       },
     };
+  };
+
+  const [logExportMenuOpen, setLogExportMenuOpen] = useState(false);
+  const logExportMenuRef = useRef(null);
+  const logExportButtonRef = useRef(null);
+
+  useEffect(() => {
+    if (!logExportMenuOpen) return;
+    const onMouseDown = (e) => {
+      const menuEl = logExportMenuRef.current;
+      const btnEl = logExportButtonRef.current;
+      if (menuEl && menuEl.contains(e.target)) return;
+      if (btnEl && btnEl.contains(e.target)) return;
+      setLogExportMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [logExportMenuOpen]);
+
+  const exportMessageLogs = (scope) => {
+    try {
+      const exportLogs = scope === 'all' ? messageLogs : filteredMessageLogs;
+      const payload = buildMessageLogsExportPayload(scope, exportLogs);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = scope === 'all'
+        ? `mqtt-pro-message-logs-all-${ts}.json`
+        : `mqtt-pro-message-logs-filtered-${ts}.json`;
+      downloadJsonFile(payload, filename);
+      addLog('system', '', `已导出消息日志（${scope === 'all' ? '全部' : '筛选后'}，${payload.count} 条）`);
+    } catch (e) {
+      addLog('error', '', `导出失败: ${String(e?.message || e)}`);
+    } finally {
+      setLogExportMenuOpen(false);
+    }
   };
 
   const handleExportBackup = (includePasswords = false) => {
@@ -1217,24 +1303,28 @@ export default function MqttDebugger() {
   };
 
   const handleSubscribe = () => {
-    if (client?.connected && subTopic && !subscriptions.includes(subTopic)) {
-      client.subscribe(subTopic, e => {
+    const topic = String(subTopic || '').trim();
+    if (client?.connected && topic && !subscriptions.includes(topic)) {
+      client.subscribe(topic, e => {
         if (!e) {
-          updateSubscriptions((prev) => (prev.includes(subTopic) ? prev : [...prev, subTopic]));
-          addLog('system', subTopic, '订阅成功');
+          updateSubscriptions((prev) => (prev.includes(topic) ? prev : [...prev, topic]));
+          setLogTopicFilters((prev) => (prev.includes(topic) ? prev : [...prev, topic]));
+          addLog('system', topic, '订阅成功');
         } else {
-          addLog('error', subTopic, '订阅失败');
+          addLog('error', topic, '订阅失败');
         }
       });
     }
   };
 
   const handleUnsubscribe = (t) => {
+    const topic = String(t || '').trim();
     if (client?.connected) {
-      client.unsubscribe(t, e => {
+      client.unsubscribe(topic, e => {
         if (!e) {
-          updateSubscriptions((prev) => prev.filter((i) => i !== t));
-          addLog('system', t, '退订成功');
+          updateSubscriptions((prev) => prev.filter((i) => i !== topic));
+          setLogTopicFilters((prev) => prev.filter((i) => i !== topic));
+          addLog('system', topic, '退订成功');
         }
       });
     }
@@ -1261,6 +1351,27 @@ export default function MqttDebugger() {
   handlePublishRef.current = handlePublish;
 
   // 定时发送控制
+  const normalizeTimerIntervalMs = (raw) => {
+    const s = String(raw ?? '').trim();
+    if (!s) return null;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch < '0' || ch > '9') return null;
+    }
+    const n = Number(s);
+    if (!Number.isFinite(n)) return null;
+    return Math.max(100, Math.floor(n));
+  };
+  const syncTimerIntervalFromInput = () => {
+    const normalized = normalizeTimerIntervalMs(timerIntervalInput);
+    if (normalized == null) {
+      setTimerIntervalInput(String(timerInterval));
+      return timerInterval;
+    }
+    setTimerInterval(normalized);
+    setTimerIntervalInput(String(normalized));
+    return normalized;
+  };
   const toggleTimer = () => {
     if (timerEnabled) {
       // 停止定时
@@ -1275,8 +1386,9 @@ export default function MqttDebugger() {
       if (!client?.connected) return addLog('error', '', '请先连接服务器');
       if (!pubTopic) return addLog('error', '', '请输入 Topic');
 
+      const intervalMs = syncTimerIntervalFromInput();
       setTimerEnabled(true);
-      addLog('system', '', `定时发送已启动，间隔 ${timerInterval}ms`);
+      addLog('system', '', `定时发送已启动，间隔 ${intervalMs}ms`);
 
       timerRef.current = setInterval(() => {
         const parsedMessage = pubMessage;
@@ -1284,7 +1396,7 @@ export default function MqttDebugger() {
           if (e) addLog('error', pubTopic, e.message);
           else addLog('sent', pubTopic, parsedMessage, `定时发送 QoS: ${pubQoS}`);
         });
-      }, timerInterval);
+      }, intervalMs);
     }
   };
 
@@ -1349,6 +1461,31 @@ export default function MqttDebugger() {
   const toHex = (str) => { let h=''; for(let i=0;i<str.length;i++) h+=str.charCodeAt(i).toString(16).padStart(2,'0')+' '; return h.toUpperCase(); };
   const isJson = (str) => { try { JSON.parse(str); return true; } catch { return false; } };
   const tryFormatJson = (str) => { try { return JSON.stringify(JSON.parse(str), null, 2); } catch { return str; } };
+  const topicMatchesFilter = (filter, topic) => {
+    const f = String(filter || '').trim();
+    const tpc = String(topic || '');
+    if (!f) return false;
+    if (f === '#') return true;
+
+    const fLevels = f.split('/');
+    const tLevels = tpc.split('/');
+
+    let i = 0;
+    for (; i < fLevels.length; i++) {
+      const fl = fLevels[i];
+      if (fl === '#') return i === fLevels.length - 1;
+      if (i >= tLevels.length) return false;
+      if (fl === '+') continue;
+      if (fl !== tLevels[i]) return false;
+    }
+    return i === tLevels.length;
+  };
+  const toggleLogTopicFilter = (filter) => {
+    const f = String(filter || '').trim();
+    if (!f) return;
+    setLogTopicFilters((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
+  };
+  const clearLogTopicFilters = () => setLogTopicFilters([]);
 
   const isMessageLog = (log) => (
     log.type === 'sent' ||
@@ -1357,7 +1494,8 @@ export default function MqttDebugger() {
   );
   const messageLogs = logs.filter(isMessageLog);
   const filteredMessageLogs = messageLogs.filter((log) => (
-    !logFilter || ((log.topic + log.payload + log.type + (log.details || '')).toLowerCase().includes(logFilter.toLowerCase()))
+    (!logFilter || ((log.topic + log.payload + log.type + (log.details || '')).toLowerCase().includes(logFilter.toLowerCase()))) &&
+    (!logTopicFilters.length || (log.topic && logTopicFilters.some((f) => topicMatchesFilter(f, log.topic))))
   ));
   const eventLogs = logs.filter((log) => !isMessageLog(log));
   const filteredEventLogs = eventLogs.filter((log) => (
@@ -1967,9 +2105,43 @@ export default function MqttDebugger() {
                 </div>
                 <div className="space-y-1 px-2">
                   {subscriptions.map(sub => (
-                    <div key={sub} className={`flex items-center justify-between ${t.card} px-3 py-2 rounded-lg border group hover:border-emerald-500/30 transition-all`}>
-                      <span className="text-xs text-emerald-500 font-mono truncate mr-2" title={sub}>{sub}</span>
-                      <button onClick={() => handleUnsubscribe(sub)} className={`${t.textMuted} hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all`}><Trash2 className="w-3 h-3"/></button>
+                    <div
+                      key={sub}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => toggleLogTopicFilter(sub)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggleLogTopicFilter(sub);
+                        }
+                      }}
+                      className={`flex items-center justify-between ${t.card} px-3 py-2 rounded-lg border group transition-all cursor-pointer select-none ${
+                        logTopicFilters.includes(sub) ? 'border-indigo-500/60 ring-1 ring-indigo-500/30' : 'hover:border-emerald-500/30'
+                      }`}
+                      title="单击切换：筛选消息日志（不影响实际订阅）"
+                    >
+                      <div className="flex items-center min-w-0 gap-2">
+                        <span
+                          className={`text-xs leading-none ${
+                            logTopicFilters.includes(sub)
+                              ? (theme === 'light' ? 'text-indigo-600' : 'text-indigo-400')
+                              : 'opacity-0'
+                          }`}
+                          aria-hidden="true"
+                          title={logTopicFilters.includes(sub) ? '已选中筛选' : ''}
+                        >
+                          ●
+                        </span>
+                        <span className="text-xs text-emerald-500 font-mono truncate mr-2" title={sub}>{sub}</span>
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleUnsubscribe(sub); }}
+                        className={`${t.textMuted} hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all`}
+                        title="退订"
+                      >
+                        <Trash2 className="w-3 h-3"/>
+                      </button>
                     </div>
                   ))}
                   {subscriptions.length === 0 && <div className={`text-xs ${t.textMuted} text-center py-4 border border-dashed ${t.border} rounded-lg`}>暂无订阅</div>}
@@ -2038,17 +2210,62 @@ export default function MqttDebugger() {
 
         {/* 日志区域 */}
         <div className="flex-1 flex flex-col min-h-0 relative">
-          <div className={`px-6 py-3 ${t.bgTertiary} border-b ${t.border} flex justify-between items-center shrink-0`}>
-            <div className="flex items-center gap-3">
-              <h3 className={`text-sm font-semibold ${t.textSecondary} flex items-center gap-2`}>
-                <MessageSquare className="w-4 h-4 text-indigo-500"/> 消息日志
-              </h3>
-              <span className={`text-xs ${t.textMuted}`}>{filteredMessageLogs.length} 条记录</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setLogViewMode(m => m==='text'?'hex':'text')} className={`text-xs px-3 py-1.5 rounded-lg ${t.textSecondary} ${t.bgHover} transition-colors flex items-center gap-1`}>
-                <Binary className="w-3 h-3"/>{logViewMode.toUpperCase()}
-              </button>
+            <div className={`px-6 py-3 ${t.bgTertiary} border-b ${t.border} flex justify-between items-center shrink-0`}>
+              <div className="flex items-center gap-3">
+                <h3 className={`text-sm font-semibold ${t.textSecondary} flex items-center gap-2`}>
+                  <MessageSquare className="w-4 h-4 text-indigo-500"/> 消息日志
+                </h3>
+                <span className={`text-xs ${t.textMuted}`}>{filteredMessageLogs.length} 条记录</span>
+                {logTopicFilters.length > 0 && (
+                  <span className={`text-xs ${t.textMuted} flex items-center gap-2`}>
+                    <span>主题筛选：{logTopicFilters.length} 个</span>
+                    <button
+                      type="button"
+                      onClick={clearLogTopicFilters}
+                      className={`px-2 py-0.5 rounded-md border ${t.border} ${t.bgHover} ${t.textSecondary} transition-colors`}
+                      title="取消筛选"
+                    >
+                      取消筛选
+                    </button>
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setLogViewMode(m => m==='text'?'hex':'text')} className={`text-xs px-3 py-1.5 rounded-lg ${t.textSecondary} ${t.bgHover} transition-colors flex items-center gap-1`}>
+                  <Binary className="w-3 h-3"/>{logViewMode.toUpperCase()}
+                </button>
+                <div className="relative">
+                  <button
+                    ref={logExportButtonRef}
+                    type="button"
+                    onClick={() => setLogExportMenuOpen((v) => !v)}
+                    className={`text-xs px-3 py-1.5 rounded-lg ${t.textSecondary} ${t.bgHover} transition-colors flex items-center gap-1`}
+                    title="导出消息日志"
+                  >
+                    <Download className="w-3 h-3"/> 导出
+                  </button>
+                  {logExportMenuOpen && (
+                    <div
+                      ref={logExportMenuRef}
+                      className={`absolute right-0 mt-2 w-44 ${t.bgSecondary} border ${t.border} rounded-xl ${t.shadowLg} overflow-hidden z-30`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => exportMessageLogs('filtered')}
+                        className={`w-full px-4 py-2 text-left text-xs ${t.textSecondary} ${t.bgHover} transition-colors`}
+                      >
+                        导出当前（筛选后）
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => exportMessageLogs('all')}
+                        className={`w-full px-4 py-2 text-left text-xs ${t.textSecondary} ${t.bgHover} transition-colors`}
+                      >
+                        导出全部
+                      </button>
+                    </div>
+                  )}
+                </div>
               <button onClick={() => setIsAutoScroll(!isAutoScroll)} className={`text-xs px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 ${isAutoScroll ? (theme === 'light' ? 'text-emerald-600 bg-emerald-50' : 'text-emerald-400 bg-emerald-500/10') : (theme === 'light' ? 'text-amber-600 bg-amber-50' : 'text-amber-400 bg-amber-500/10')}`}>
                 {isAutoScroll ? 'Auto' : 'Paused'}
               </button>
@@ -2136,9 +2353,22 @@ export default function MqttDebugger() {
               <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2`}>
                 <Timer className={`w-4 h-4 ${t.textMuted}`}/>
                 <input
-                  type="number"
-                  value={timerInterval}
-                  onChange={(e) => setTimerInterval(Math.max(100, Number(e.target.value)))}
+                  type="text"
+                  inputMode="numeric"
+                  value={timerIntervalInput}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '') return setTimerIntervalInput(v);
+                    for (let i = 0; i < v.length; i++) {
+                      const ch = v[i];
+                      if (ch < '0' || ch > '9') return;
+                    }
+                    setTimerIntervalInput(v);
+                  }}
+                  onBlur={syncTimerIntervalFromInput}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur();
+                  }}
                   disabled={timerEnabled}
                   className={`w-16 bg-transparent text-xs outline-none text-center ${t.textSecondary}`}
                   placeholder="间隔"
