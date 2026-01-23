@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { 
@@ -11,10 +11,12 @@ import {
   Clock, Copy, Plus, Binary, Cloud, Zap, Edit2, Check, Share2,
   AlertCircle, Layout, RefreshCw, Timer, BarChart3, Keyboard,
   FileText, Variable, RotateCcw, Info, ArrowUpRight, ArrowDownRight,
-  Bell, LayoutDashboard, Sun, Moon, Star
+  Bell, LayoutDashboard, Sun, Moon, Star, Maximize2
 } from 'lucide-react';
 import { detectRuntime, isDesktopTcpCapable } from './mqtt/runtime.js';
 import { encryptJson, decryptJson } from './mqtt/e2ee.js';
+
+const PUBLISH_PANEL_HEIGHT_PX = 220;
 
 // 协议端口映射表
 const PROTOCOL_PORT_MAP = {
@@ -30,6 +32,26 @@ const PRESET_BROKERS = [
   { name: 'HiveMQ 公共服务器', host: 'broker.hivemq.com', ws: 8000, wss: 8884, path: '/mqtt' },
   { name: 'Mosquitto 测试服务器', host: 'test.mosquitto.org', ws: 8080, wss: 8081, path: '' }
 ];
+
+function topicMatchesFilter(filter, topic) {
+  const f = String(filter || '').trim();
+  const tpc = String(topic || '');
+  if (!f) return false;
+  if (f === '#') return true;
+
+  const fLevels = f.split('/');
+  const tLevels = tpc.split('/');
+
+  let i = 0;
+  for (; i < fLevels.length; i++) {
+    const fl = fLevels[i];
+    if (fl === '#') return i === fLevels.length - 1;
+    if (i >= tLevels.length) return false;
+    if (fl === '+') continue;
+    if (fl !== tLevels[i]) return false;
+  }
+  return i === tLevels.length;
+}
 
 // --- Firebase 初始化与容错处理 ---
 let app, auth, db;
@@ -155,6 +177,8 @@ export default function MqttDebugger() {
   const [pubRetain, setPubRetain] = useState(false); 
   const [showQuickActionsPanel, setShowQuickActionsPanel] = useState(false);
   const [quickActionQuery, setQuickActionQuery] = useState('');
+  const [publishEditorOpen, setPublishEditorOpen] = useState(false);
+  const [publishEditorValue, setPublishEditorValue] = useState('');
   const [recentActionIds, setRecentActionIds] = useState(() => {
     try {
       const raw = localStorage.getItem('mqtt_recent_actions');
@@ -164,6 +188,8 @@ export default function MqttDebugger() {
       return [];
     }
   });
+  const [maxCommonActions, setMaxCommonActions] = useState(6); // 常用指令栏最大显示数量（3-6）
+  const commonActionsContainerRef = useRef(null);
 
   // 日志
   const [logs, setLogs] = useState([]);
@@ -228,6 +254,8 @@ export default function MqttDebugger() {
   useEffect(() => { reconnectCountRef.current = reconnectCount; }, [reconnectCount]);
   const clientRef = useRef(null);
   useEffect(() => { clientRef.current = client; }, [client]);
+  const lastManualPublishRef = useRef({ at: 0, topic: '', payload: '', qos: 0, retain: false });
+  const recentInboundRef = useRef(new Map());
   const manualDisconnectRef = useRef(null);
   const everConnectedRef = useRef(null);
   const handleConnectRef = useRef(null);
@@ -246,6 +274,29 @@ export default function MqttDebugger() {
     setTheme(newTheme);
     localStorage.setItem('mqtt_theme', newTheme);
   };
+
+  // 响应式调整常用指令栏显示数量
+  useEffect(() => {
+    const container = commonActionsContainerRef.current;
+    if (!container) return;
+
+    const updateMaxActions = () => {
+      const containerWidth = container.offsetWidth;
+      // 每个按钮约 100px，标签约 60px，间隙 8px
+      // 根据容器宽度计算能放下的按钮数量（3-6 个）
+      const availableWidth = containerWidth - 60 - 16; // 减去标签和内边距
+      const buttonWidth = 100 + 8; // 按钮宽度 + 间隙
+      const maxButtons = Math.floor(availableWidth / buttonWidth);
+      const clampedMax = Math.max(3, Math.min(6, maxButtons));
+      setMaxCommonActions(clampedMax);
+    };
+
+    updateMaxActions();
+    const resizeObserver = new ResizeObserver(updateMaxActions);
+    resizeObserver.observe(container);
+
+    return () => resizeObserver.disconnect();
+  }, []);
 
   // 主题配色
   const t = theme === 'light' ? {
@@ -386,24 +437,36 @@ export default function MqttDebugger() {
   }, []);
 
   useEffect(() => {
-    const localConfigs = localStorage.getItem('mqtt_configs');
-    const localActions = localStorage.getItem('mqtt_quick_actions');
-    const localSubs = localStorage.getItem('mqtt_subscriptions');
-    const lastSyncId = localStorage.getItem('mqtt_sync_id');
-    if (localConfigs) setSavedConfigs(JSON.parse(localConfigs));
-    if (localActions) setQuickActions(JSON.parse(localActions));
-    if (localSubs) {
+    const safeReadJsonArray = (key) => {
       try {
-        const subs = JSON.parse(localSubs);
-        if (Array.isArray(subs)) {
-          setSubscriptions(subs);
-          lastSubscriptionsRef.current = subs;
-        }
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : null;
       } catch {
-        // ignore
+        // Corrupted local data should not break app boot.
+        try { localStorage.removeItem(key); } catch { /* ignore */ }
+        return null;
       }
+    };
+
+    const configs = safeReadJsonArray('mqtt_configs');
+    const actions = safeReadJsonArray('mqtt_quick_actions');
+    const subs = safeReadJsonArray('mqtt_subscriptions');
+
+    if (configs) setSavedConfigs(configs);
+    if (actions) setQuickActions(actions);
+    if (subs) {
+      setSubscriptions(subs);
+      lastSubscriptionsRef.current = subs;
     }
-    if (lastSyncId) { setSyncSpaceId(lastSyncId); setInputSpaceId(lastSyncId); }
+
+    try {
+      const lastSyncId = localStorage.getItem('mqtt_sync_id');
+      if (lastSyncId) { setSyncSpaceId(lastSyncId); setInputSpaceId(lastSyncId); }
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
@@ -732,6 +795,11 @@ export default function MqttDebugger() {
     setModal({ ...modal, open: false });
   };
 
+  const openPublishEditor = () => {
+    setPublishEditorValue(pubMessage);
+    setPublishEditorOpen(true);
+  };
+
   // --- 业务逻辑 ---
   const handleConnectSync = () => {
     if (!isFirebaseAvailable) {
@@ -784,8 +852,17 @@ export default function MqttDebugger() {
   const handleSaveAction = () => {
     openInputModal("给指令起个名字 (如: 开灯)", "新指令", (name) => {
       if (!name) return;
-      const newAction = { 
-        id: Date.now(), name, topic: pubTopic, payload: pubMessage, 
+
+      // 检查名称是否重复
+      const trimmedName = name.trim();
+      const isDuplicate = quickActions.some(a => a.name === trimmedName);
+      if (isDuplicate) {
+        addLog('error', '', `指令名称"${trimmedName}"已存在，请使用其他名称`);
+        return;
+      }
+
+      const newAction = {
+        id: Date.now(), name: trimmedName, topic: pubTopic, payload: pubMessage,
         qos: pubQoS, retain: pubRetain, pinned: false
       };
       const newActions = [...quickActions, newAction];
@@ -798,9 +875,54 @@ export default function MqttDebugger() {
     setPubQoS(action.qos); setPubRetain(action.retain);
   };
 
+  const shouldDropDuplicateManualPublish = (topic, payload, qos, retain) => {
+    const now = Date.now();
+    const last = lastManualPublishRef.current;
+    // Very small window: only meant to prevent accidental double-trigger (double click / double key).
+    if (
+      last &&
+      now - last.at < 80 &&
+      last.topic === topic &&
+      last.payload === payload &&
+      last.qos === qos &&
+      last.retain === retain
+    ) {
+      if (isDevMode) console.warn('[publish] duplicate suppressed', { topic, qos, retain });
+      return true;
+    }
+    lastManualPublishRef.current = { at: now, topic, payload, qos, retain };
+    return false;
+  };
+
+  const shouldDropDuplicateInbound = (topic, payload, packet) => {
+    // MQTT QoS1 retransmission can cause duplicate delivery (DUP flag).
+    // We suppress only duplicates that are explicitly marked as DUP to avoid hiding legitimate repeats.
+    if (!packet || packet.dup !== true) return false;
+
+    const now = Date.now();
+    const mid = packet.messageId ?? packet.message_id ?? packet.mid ?? null;
+    const key = mid != null ? `${topic}|mid:${String(mid)}` : `${topic}|payload:${payload}`;
+
+    const seenAt = recentInboundRef.current.get(key);
+    if (typeof seenAt === 'number' && now - seenAt < 60_000) {
+      if (isDevMode) console.warn('[recv] dup packet suppressed', { topic, mid, qos: packet.qos, retain: packet.retain });
+      return true;
+    }
+    recentInboundRef.current.set(key, now);
+
+    // Best-effort prune to keep memory bounded.
+    if (recentInboundRef.current.size > 2000) {
+      for (const [k, t] of recentInboundRef.current.entries()) {
+        if (now - t > 120_000) recentInboundRef.current.delete(k);
+      }
+    }
+    return false;
+  };
+
   const handleFireAction = (action) => {
     if (!client || !client.connected) return addLog('error', '', '请先连接服务器');
     const payload = action.payload;
+    if (shouldDropDuplicateManualPublish(action.topic, payload, action.qos, action.retain)) return;
     client.publish(action.topic, payload, { qos: action.qos, retain: action.retain }, (err) => {
       if (err) addLog('error', action.topic, `指令 "${action.name}" 发送失败: ${err.message}`);
       else addLog('sent', action.topic, payload, `指令: ${action.name}`);
@@ -846,6 +968,29 @@ export default function MqttDebugger() {
     openConfirmModal("确定删除此快捷指令?", () => {
       const newActions = quickActions.filter(t => t.id !== id);
       updateData('actions', newActions);
+    });
+  };
+
+  const handleRenameAction = (action, e) => {
+    if (e) e.stopPropagation();
+    openInputModal("修改指令名称", action.name, (newName) => {
+      if (!newName || newName === action.name) return;
+
+      // 检查新名称是否与其他指令重复
+      const trimmedName = newName.trim();
+      const isDuplicate = quickActions.some(
+        a => a.id !== action.id && a.name === trimmedName
+      );
+      if (isDuplicate) {
+        addLog('error', '', `指令名称"${trimmedName}"已存在，请使用其他名称`);
+        return;
+      }
+
+      // 更新指令名称
+      const updatedActions = quickActions.map(a =>
+        a.id === action.id ? { ...a, name: trimmedName } : a
+      );
+      updateData('actions', updatedActions);
     });
   };
 
@@ -1248,7 +1393,11 @@ export default function MqttDebugger() {
         }
       });
 
-      newClient.on('message', (t, m) => addLog('received', t, m.toString()));
+      newClient.on('message', (t, m, packet) => {
+        const payload = m != null ? m.toString() : '';
+        if (shouldDropDuplicateInbound(t, payload, packet)) return;
+        addLog('received', t, payload);
+      });
       setClient(newClient);
     } catch (e) {
       setConnectStatus('error');
@@ -1319,15 +1468,28 @@ export default function MqttDebugger() {
 
   const handleUnsubscribe = (t) => {
     const topic = String(t || '').trim();
-    if (client?.connected) {
-      client.unsubscribe(topic, e => {
-        if (!e) {
-          updateSubscriptions((prev) => prev.filter((i) => i !== topic));
-          setLogTopicFilters((prev) => prev.filter((i) => i !== topic));
-          addLog('system', topic, '退订成功');
-        }
-      });
+    if (!topic) return;
+
+    const removeLocalSubscription = () => {
+      updateSubscriptions((prev) => prev.filter((i) => i !== topic));
+      setLogTopicFilters((prev) => prev.filter((i) => i !== topic));
+    };
+
+    // 非连接状态下也允许删除本地订阅列表，避免重连后自动重订阅
+    if (!client?.connected) {
+      removeLocalSubscription();
+      addLog('system', topic, '已从订阅列表移除（未连接）');
+      return;
     }
+
+    client.unsubscribe(topic, e => {
+      if (!e) {
+        removeLocalSubscription();
+        addLog('system', topic, '退订成功');
+      } else {
+        addLog('error', topic, '退订失败');
+      }
+    });
   };
 
   const handlePublish = () => {
@@ -1336,6 +1498,7 @@ export default function MqttDebugger() {
 
 
     const parsedMessage = pubMessage;
+    if (shouldDropDuplicateManualPublish(pubTopic, parsedMessage, pubQoS, pubRetain)) return;
 
     client.publish(pubTopic, parsedMessage, { qos: pubQoS, retain: pubRetain }, e => {
       if (e) {
@@ -1459,26 +1622,14 @@ export default function MqttDebugger() {
   // Formatters
   const formatDuration = (s) => `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
   const toHex = (str) => { let h=''; for(let i=0;i<str.length;i++) h+=str.charCodeAt(i).toString(16).padStart(2,'0')+' '; return h.toUpperCase(); };
-  const isJson = (str) => { try { JSON.parse(str); return true; } catch { return false; } };
-  const tryFormatJson = (str) => { try { return JSON.stringify(JSON.parse(str), null, 2); } catch { return str; } };
-  const topicMatchesFilter = (filter, topic) => {
-    const f = String(filter || '').trim();
-    const tpc = String(topic || '');
-    if (!f) return false;
-    if (f === '#') return true;
-
-    const fLevels = f.split('/');
-    const tLevels = tpc.split('/');
-
-    let i = 0;
-    for (; i < fLevels.length; i++) {
-      const fl = fLevels[i];
-      if (fl === '#') return i === fLevels.length - 1;
-      if (i >= tLevels.length) return false;
-      if (fl === '+') continue;
-      if (fl !== tLevels[i]) return false;
+  const formatJsonPayload = (value) => {
+    const raw = String(value ?? '');
+    try {
+      const parsed = JSON.parse(raw);
+      return { isJson: true, formatted: JSON.stringify(parsed, null, 2) };
+    } catch {
+      return { isJson: false, formatted: raw };
     }
-    return i === tLevels.length;
   };
   const toggleLogTopicFilter = (filter) => {
     const f = String(filter || '').trim();
@@ -1487,20 +1638,34 @@ export default function MqttDebugger() {
   };
   const clearLogTopicFilters = () => setLogTopicFilters([]);
 
-  const isMessageLog = (log) => (
-    log.type === 'sent' ||
-    log.type === 'received' ||
-    (log.type === 'error' && (!!log.topic || !isDevMode))
-  );
-  const messageLogs = logs.filter(isMessageLog);
-  const filteredMessageLogs = messageLogs.filter((log) => (
-    (!logFilter || ((log.topic + log.payload + log.type + (log.details || '')).toLowerCase().includes(logFilter.toLowerCase()))) &&
-    (!logTopicFilters.length || (log.topic && logTopicFilters.some((f) => topicMatchesFilter(f, log.topic))))
-  ));
-  const eventLogs = logs.filter((log) => !isMessageLog(log));
-  const filteredEventLogs = eventLogs.filter((log) => (
-    !eventFilter || ((log.topic + log.payload + log.type + (log.details || '')).toLowerCase().includes(eventFilter.toLowerCase()))
-  ));
+  const logFilterLower = useMemo(() => String(logFilter || '').toLowerCase(), [logFilter]);
+  const eventFilterLower = useMemo(() => String(eventFilter || '').toLowerCase(), [eventFilter]);
+
+  const { messageLogs, eventLogs } = useMemo(() => {
+    const msg = [];
+    const evt = [];
+    for (const log of logs || []) {
+      const isMsg =
+        log.type === 'sent' ||
+        log.type === 'received' ||
+        (log.type === 'error' && (!!log.topic || !isDevMode));
+      (isMsg ? msg : evt).push(log);
+    }
+    return { messageLogs: msg, eventLogs: evt };
+  }, [logs, isDevMode]);
+
+  const filteredMessageLogs = useMemo(() => (
+    messageLogs.filter((log) => (
+      (!logFilterLower || ((log.topic + log.payload + log.type + (log.details || '')).toLowerCase().includes(logFilterLower))) &&
+      (!logTopicFilters.length || (log.topic && logTopicFilters.some((f) => topicMatchesFilter(f, log.topic))))
+    ))
+  ), [messageLogs, logFilterLower, logTopicFilters]);
+
+  const filteredEventLogs = useMemo(() => (
+    eventLogs.filter((log) => (
+      !eventFilterLower || ((log.topic + log.payload + log.type + (log.details || '')).toLowerCase().includes(eventFilterLower))
+    ))
+  ), [eventLogs, eventFilterLower]);
   const pinnedActions = (() => {
     const pinned = (quickActions || []).filter((a) => a && a.pinned);
     if (pinned.length <= 1) return pinned;
@@ -1518,20 +1683,20 @@ export default function MqttDebugger() {
     const chosen = [];
 
     for (const action of pinnedActions) {
-      if (action && chosen.length < 3) chosen.push(action);
+      if (action && chosen.length < maxCommonActions) chosen.push(action);
     }
 
-    if (chosen.length < 3) {
+    if (chosen.length < maxCommonActions) {
       for (const id of (recentActionIds || [])) {
         const action = byId.get(id);
         if (!action) continue;
         if (chosen.some((a) => a.id === action.id)) continue;
         chosen.push(action);
-        if (chosen.length >= 3) break;
+        if (chosen.length >= maxCommonActions) break;
       }
     }
 
-    return chosen.slice(0, 3);
+    return chosen.slice(0, maxCommonActions);
   })();
 
   // 统计卡片组件
@@ -1569,7 +1734,7 @@ export default function MqttDebugger() {
 
       {/* 模态框 */}
       {modal.open && (
-        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
           <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-sm w-full border ${t.border} p-6 transform scale-100`}>
             <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${t.text}`}>
               {modal.type === 'confirm' && <AlertCircle className="w-5 h-5 text-amber-500" />}
@@ -1584,6 +1749,53 @@ export default function MqttDebugger() {
             <div className="flex justify-end gap-3">
               <button onClick={() => setModal({...modal, open: false})} className={`px-4 py-2 ${t.bgTertiary} ${t.bgHover} rounded-xl text-sm font-medium transition-colors ${t.textSecondary}`}>取消</button>
               <button onClick={handleModalSubmit} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg ${modal.type === 'confirm' ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'}`}>{modal.type === 'confirm' ? '确定删除' : '确定保存'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {publishEditorOpen && (
+        <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
+          <div className={`${t.bgSecondary} rounded-2xl shadow-2xl w-full max-w-4xl h-[80vh] border ${t.border} flex flex-col overflow-hidden`}>
+            <div className={`p-4 border-b ${t.border} flex items-center gap-3`}>
+              <div className="min-w-0 flex-1">
+                <div className={`text-sm font-semibold ${t.text}`}>{'\u53d1\u9001\u533a\u7f16\u8f91'}</div>
+                <div className={`text-xs ${t.textMuted}`}>Payload</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPublishEditorOpen(false)}
+                className={`p-2 ${t.bgTertiary} border ${t.border} rounded-xl ${t.textSecondary} hover:${t.text} ${t.bgHover} transition-all`}
+                title={'\u5173\u95ed'}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 p-4">
+              <textarea
+                value={publishEditorValue}
+                onChange={(e) => setPublishEditorValue(e.target.value)}
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                className={`w-full h-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text} custom-scrollbar`}
+              />
+            </div>
+            <div className={`p-4 border-t ${t.border} flex justify-end gap-3`}>
+              <button
+                type="button"
+                onClick={() => setPublishEditorOpen(false)}
+                className={`px-4 py-2 ${t.bgTertiary} ${t.bgHover} rounded-xl text-sm font-medium transition-colors ${t.textSecondary}`}
+              >
+                {'\u53d6\u6d88'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setPubMessage(publishEditorValue); setPublishEditorOpen(false); }}
+                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20"
+              >
+                {'\u5e94\u7528'}
+              </button>
             </div>
           </div>
         </div>
@@ -1671,6 +1883,14 @@ export default function MqttDebugger() {
                             </button>
                             <button
                               type="button"
+                              onClick={(e) => handleRenameAction(action, e)}
+                              className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                              title="重命名"
+                            >
+                              <Edit2 className={`w-4 h-4 ${t.textMuted}`} />
+                            </button>
+                            <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleLoadAction(action);
@@ -1680,7 +1900,7 @@ export default function MqttDebugger() {
                               className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
                               title="填充到发送区"
                             >
-                              <Edit2 className={`w-4 h-4 ${t.textMuted}`} />
+                              <Copy className={`w-4 h-4 ${t.textMuted}`} />
                             </button>
                             <button
                               type="button"
@@ -2309,9 +2529,12 @@ export default function MqttDebugger() {
                       {logViewMode === 'hex' ? (
                         <div className={`${theme === 'light' ? 'text-purple-600' : 'text-purple-300'} tracking-wider`}>{toHex(log.payload)}</div>
                       ) : (
-                        isJson(log.payload) ? (
-                          <pre className={`${theme === 'light' ? 'text-indigo-600' : 'text-indigo-300'} overflow-x-auto`}>{tryFormatJson(log.payload)}</pre>
-                        ) : log.payload
+                        (() => {
+                          const { isJson, formatted } = formatJsonPayload(log.payload);
+                          return isJson ? (
+                            <pre className={`${theme === 'light' ? 'text-indigo-600' : 'text-indigo-300'} overflow-x-auto`}>{formatted}</pre>
+                          ) : formatted;
+                        })()
                       )}
                     </div>
                   </div>
@@ -2323,8 +2546,11 @@ export default function MqttDebugger() {
         </div>
 
         {/* 发布区域 */}
-        <div className={`shrink-0 border-t ${t.border} ${t.bgSecondary} backdrop-blur-xl ${theme === 'light' ? 'shadow-[0_-4px_20px_rgba(0,0,0,0.05)]' : 'shadow-[0_-4px_20px_rgba(0,0,0,0.3)]'} z-10 transition-colors duration-300`}>
-          <div className="p-4 space-y-3">
+        <div
+          className={`shrink-0 border-t ${t.border} ${t.bgSecondary} backdrop-blur-xl ${theme === 'light' ? 'shadow-[0_-4px_20px_rgba(0,0,0,0.05)]' : 'shadow-[0_-4px_20px_rgba(0,0,0,0.3)]'} z-10 transition-colors duration-300`}
+          style={{ height: PUBLISH_PANEL_HEIGHT_PX }}
+        >
+          <div className="p-4 h-full flex flex-col gap-3">
 
             {/* 第一行：Topic 和选项 */}
             <div className="flex items-center gap-3">
@@ -2404,7 +2630,7 @@ export default function MqttDebugger() {
               </button>
             </div>
 
-            <div className={`flex items-center gap-2 ${t.bgTertiary} border ${t.border} rounded-xl px-3 py-2 overflow-x-auto custom-scrollbar`}>
+            <div ref={commonActionsContainerRef} className={`flex items-center gap-2 ${t.bgTertiary} border ${t.border} rounded-xl px-3 py-2 overflow-x-auto custom-scrollbar`}>
               <div className={`text-xs font-semibold ${t.textMuted} shrink-0 flex items-center gap-1`}>
                 <Star className="w-3.5 h-3.5" />
                 常用
@@ -2425,7 +2651,7 @@ export default function MqttDebugger() {
                     {action.name}
                   </button>
                 ))}
-                {Array.from({ length: Math.max(0, 3 - commonActions.length) }).map((_, idx) => (
+                {Array.from({ length: Math.max(0, maxCommonActions - commonActions.length) }).map((_, idx) => (
                   <button
                     key={`common-empty-${idx}`}
                     type="button"
@@ -2440,13 +2666,24 @@ export default function MqttDebugger() {
             </div>
 
             {/* 消息输入和发送 */}
-            <div className="flex gap-3">
+            <div className="flex gap-3 flex-1 min-h-0">
               <textarea
                 value={pubMessage}
                 onChange={(e) => setPubMessage(e.target.value)}
-                className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all h-24 ${t.text}`}
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                className={`flex-1 h-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-none min-h-0 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text} custom-scrollbar`}
                 placeholder='Payload (e.g. {"msg": "Hello"})'
               />
+              <button
+                type="button"
+                onClick={openPublishEditor}
+                className={`w-10 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-xl ${t.textSecondary} hover:${t.text} transition-all flex items-center justify-center`}
+                title={'\u5c55\u5f00\u7f16\u8f91'}
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
               <button
                 onClick={handlePublish}
                 disabled={!client?.connected}
@@ -2557,6 +2794,7 @@ export default function MqttDebugger() {
       </main>
 
       <style>{`
+        .custom-scrollbar { scrollbar-width: thin; scrollbar-color: ${theme === 'light' ? '#cbd5e1' : '#334155'} transparent; scrollbar-gutter: stable; }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: ${theme === 'light' ? '#cbd5e1' : '#334155'}; border-radius: 3px; }
