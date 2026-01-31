@@ -255,6 +255,9 @@ export default function MqttDebugger() {
   const clientRef = useRef(null);
   useEffect(() => { clientRef.current = client; }, [client]);
   const lastManualPublishRef = useRef({ at: 0, topic: '', payload: '', qos: 0, retain: false });
+  // KISS: UI 侧去重（极短时间窗），避免“同一条消息被重复记录两次”造成误判。
+  // 典型触发：重连/重订阅时 retained 下发、QoS1 重复投递、库内部/业务层重复触发等。
+  const lastLogRef = useRef(null);
   const recentInboundRef = useRef(new Map());
   const manualDisconnectRef = useRef(null);
   const everConnectedRef = useRef(null);
@@ -996,6 +999,23 @@ export default function MqttDebugger() {
 
   // MQTT相关函数
   const addLog = (type, topic, payload, details = '') => {
+    // KISS: 极短时间窗内完全相同的日志，直接丢弃（只为防“重复记录”，不做复杂去重规则）。
+    // received 给稍长时间窗：UI 显示仅到“秒”，同一秒内的重复最常见且最影响体验。
+    const now = Date.now();
+    const last = lastLogRef.current;
+    const windowMs = type === 'received' ? 1500 : 200;
+    if (
+      last &&
+      now - last.at < windowMs &&
+      last.type === type &&
+      last.topic === topic &&
+      last.payload === payload &&
+      last.details === details
+    ) {
+      return;
+    }
+    lastLogRef.current = { at: now, type, topic, payload, details };
+
     // 更新统计
     setMsgStats(prev => ({
       sent: type === 'sent' ? prev.sent + 1 : prev.sent,
@@ -1224,6 +1244,9 @@ export default function MqttDebugger() {
         keepalive,
         connectTimeout: 10000,      // 增加到10秒
         reconnectPeriod: autoReconnect ? 3000 : 0,
+        // 我们自己管理重订阅（autoResubscribe + 本地 subscriptions 列表），避免 mqtt.js 内置重订阅导致重复 SUBSCRIBE
+        // 在 broker 侧可能触发 retained 消息重复下发，从而表现为“收一条显示两条”。
+        resubscribe: false,
         protocolId: protocolVersion === 3 ? 'MQIsdp' : 'MQTT',
         protocolVersion,
       };
@@ -1244,7 +1267,14 @@ export default function MqttDebugger() {
         setConfigCollapsed(true);
 
         // 自动重订阅
-        if (autoResubscribe && lastSubscriptionsRef.current.length > 0) {
+        // - clean=true：broker 不保存订阅，需要每次连接后重新订阅
+        // - clean=false：仅在 sessionPresent !== true 时才需要重订阅，否则可能触发 retained 重复下发
+        const needResubscribe =
+          autoResubscribe &&
+          lastSubscriptionsRef.current.length > 0 &&
+          (advancedConfig.clean || connack?.sessionPresent !== true);
+
+        if (needResubscribe) {
           const topicsToResubscribe = [...lastSubscriptionsRef.current];
           addLog('system', '', `正在恢复 ${topicsToResubscribe.length} 个订阅...`);
           topicsToResubscribe.forEach(topic => {
