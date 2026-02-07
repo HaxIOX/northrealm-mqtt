@@ -4,6 +4,12 @@
 
 - (TBD)
 
+## 0.1.6 - 2026-02-07
+
+- Feature: multicast publish targets (select/manage multiple topics, one-click apply, bulk send current payload)
+- Feature: persist quick action group collapse state
+- Sync: include multicast targets in cloud sync
+
 ## 0.1.5 - 2026-01-05
 
 - Feature: topic filter for message logs (multi-select subscription topics, supports `#`/`+`, one-click clear)
