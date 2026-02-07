@@ -140,6 +140,7 @@ export default function MqttDebugger() {
   savedConfigsRef.current = savedConfigs;
   const quickActionsRef = useRef(quickActions);
   quickActionsRef.current = quickActions;
+  const multicastTargetsRef = useRef([]);
   const saveToCloudRef = useRef(null);
 
   // --- 编辑/运行状态 ---
@@ -174,9 +175,55 @@ export default function MqttDebugger() {
   const [pubTopic, setPubTopic] = useState('test/topic');
   const [pubMessage, setPubMessage] = useState('{"msg": "Hello MQTT"}');
   const [pubQoS, setPubQoS] = useState(0);
-  const [pubRetain, setPubRetain] = useState(false); 
+  const [pubRetain, setPubRetain] = useState(false);
   const [showQuickActionsPanel, setShowQuickActionsPanel] = useState(false);
   const [quickActionQuery, setQuickActionQuery] = useState('');
+  const [quickActionGroupCollapsed, setQuickActionGroupCollapsed] = useState(() => {
+    try {
+      const raw = localStorage.getItem('mqtt_quick_action_group_collapsed');
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('mqtt_quick_action_group_collapsed', JSON.stringify(quickActionGroupCollapsed || {}));
+    } catch {
+      // ignore
+    }
+  }, [quickActionGroupCollapsed]);
+
+  // --- 群发目标（点击式选择多设备 Topic） ---
+  const [multicastTargets, setMulticastTargets] = useState(() => {
+    try {
+      const raw = localStorage.getItem('mqtt_multicast_targets');
+      const parsed = JSON.parse(raw || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  multicastTargetsRef.current = multicastTargets;
+  const [multicastSelectedIds, setMulticastSelectedIds] = useState(() => {
+    try {
+      const raw = localStorage.getItem('mqtt_multicast_selected_ids');
+      const parsed = JSON.parse(raw || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('mqtt_multicast_targets', JSON.stringify(multicastTargets || [])); } catch { /* ignore */ }
+  }, [multicastTargets]);
+  useEffect(() => {
+    try { localStorage.setItem('mqtt_multicast_selected_ids', JSON.stringify(multicastSelectedIds || [])); } catch { /* ignore */ }
+  }, [multicastSelectedIds]);
+  const [showMulticastPanel, setShowMulticastPanel] = useState(false);
+  const [multicastQuery, setMulticastQuery] = useState('');
   const [publishEditorOpen, setPublishEditorOpen] = useState(false);
   const [publishEditorValue, setPublishEditorValue] = useState('');
   const [recentActionIds, setRecentActionIds] = useState(() => {
@@ -456,6 +503,8 @@ export default function MqttDebugger() {
     const configs = safeReadJsonArray('mqtt_configs');
     const actions = safeReadJsonArray('mqtt_quick_actions');
     const subs = safeReadJsonArray('mqtt_subscriptions');
+    const targets = safeReadJsonArray('mqtt_multicast_targets');
+    const selectedTargetIds = safeReadJsonArray('mqtt_multicast_selected_ids');
 
     if (configs) setSavedConfigs(configs);
     if (actions) setQuickActions(actions);
@@ -463,6 +512,8 @@ export default function MqttDebugger() {
       setSubscriptions(subs);
       lastSubscriptionsRef.current = subs;
     }
+    if (targets) setMulticastTargets(targets);
+    if (selectedTargetIds) setMulticastSelectedIds(selectedTargetIds);
 
     try {
       const lastSyncId = localStorage.getItem('mqtt_sync_id');
@@ -508,6 +559,10 @@ export default function MqttDebugger() {
               localStorage.setItem('mqtt_subscriptions', JSON.stringify(payload.subscriptions));
               lastSubscriptionsRef.current = payload.subscriptions;
             }
+            if (Array.isArray(payload?.multicastTargets)) {
+              setMulticastTargets(payload.multicastTargets);
+              localStorage.setItem('mqtt_multicast_targets', JSON.stringify(payload.multicastTargets));
+            }
           };
 
           if (data.enc) {
@@ -531,7 +586,7 @@ export default function MqttDebugger() {
 
           applyPayload(data);
         } else {
-          saveToCloudRef.current?.(savedConfigsRef.current, quickActionsRef.current, lastSubscriptionsRef.current);
+          saveToCloudRef.current?.(savedConfigsRef.current, quickActionsRef.current, lastSubscriptionsRef.current, multicastTargetsRef.current);
         }
       }, (error) => {
         console.error("Sync error:", error);
@@ -545,7 +600,7 @@ export default function MqttDebugger() {
     }
   }, [user, syncSpaceId, syncPassphrase]);
 
-  const saveToCloud = async (newConfigs, newActions, newSubscriptions) => {
+  const saveToCloud = async (newConfigs, newActions, newSubscriptions, newMulticastTargets) => {
     if (!isFirebaseAvailable || !user || !syncSpaceId) return;
     try {
       const docRef = doc(db, 'artifacts', appId, 'public', 'data', `mqtt_space_${syncSpaceId}`);
@@ -553,6 +608,7 @@ export default function MqttDebugger() {
         configs: newConfigs ?? savedConfigs,
         actions: newActions ?? quickActions,
         subscriptions: newSubscriptions ?? lastSubscriptionsRef.current,
+        multicastTargets: newMulticastTargets ?? multicastTargets,
       };
 
       if (syncEncryptEnabled) {
@@ -575,6 +631,7 @@ export default function MqttDebugger() {
             configs: mergedPayload.configs,
             actions: mergedPayload.actions,
             subscriptions: mergedPayload.subscriptions,
+            multicastTargets: mergedPayload.multicastTargets,
             encrypted: false,
             updatedAt: Date.now(),
             updatedBy: user.uid
@@ -600,6 +657,10 @@ export default function MqttDebugger() {
       localStorage.setItem('mqtt_subscriptions', JSON.stringify(newData));
       lastSubscriptionsRef.current = newData;
       if (syncSpaceId) saveToCloud(null, null, newData);
+    } else if (type === 'multicastTargets') {
+      setMulticastTargets(newData);
+      localStorage.setItem('mqtt_multicast_targets', JSON.stringify(newData));
+      if (syncSpaceId) saveToCloud(null, null, null, newData);
     }
   };
 
@@ -676,6 +737,7 @@ export default function MqttDebugger() {
         configs: safeConfigs,
         actions: quickActions || [],
         subscriptions: subscriptions || [],
+        multicastTargets: multicastTargets || [],
       },
     };
   };
@@ -726,17 +788,22 @@ export default function MqttDebugger() {
   };
 
   const handleExportBackupWithPasswords = () => {
-    openConfirmModal('导出备份并包含密码？（文件将包含明文密码，请妥善保管）', () => handleExportBackup(true));
+    openConfirmModal(
+      '导出备份并包含密码？（文件将包含明文密码，请妥善保管）',
+      () => handleExportBackup(true),
+      { confirmText: '继续导出', confirmVariant: 'danger' }
+    );
   };
 
   const parseBackup = (raw) => {
     if (!raw || typeof raw !== 'object') return null;
     if (raw.schema === 'mqtt-pro-backup' && raw.v === 1 && raw.data && typeof raw.data === 'object') return raw.data;
-    if (raw.configs || raw.actions || raw.subscriptions) {
+    if (raw.configs || raw.actions || raw.subscriptions || raw.multicastTargets) {
       return {
         configs: raw.configs,
         actions: raw.actions,
         subscriptions: raw.subscriptions,
+        multicastTargets: raw.multicastTargets,
       };
     }
     return null;
@@ -764,6 +831,25 @@ export default function MqttDebugger() {
     return Array.from(set);
   };
 
+  const mergeMulticastTargetsByTopic = (existing, incoming) => {
+    const norm = (t) => String(t || '').trim();
+    const topicOf = (x) => norm(x?.topic);
+    const byTopic = new Map((existing || []).map((t) => [topicOf(t), t]).filter(([k]) => k));
+
+    for (const t of incoming || []) {
+      const topic = topicOf(t);
+      if (!topic) continue;
+      const prev = byTopic.get(topic);
+      byTopic.set(topic, {
+        id: prev?.id ?? t?.id ?? Date.now() + Math.floor(Math.random() * 1000),
+        name: String(t?.name || prev?.name || topic),
+        topic,
+      });
+    }
+
+    return Array.from(byTopic.values());
+  };
+
   const handleImportBackupFileChange = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -779,8 +865,9 @@ export default function MqttDebugger() {
         if (Array.isArray(data.configs)) updateData('configs', mergeConfigsByName(savedConfigs, data.configs));
         if (Array.isArray(data.actions)) updateData('actions', mergeActionsById(quickActions, data.actions));
         if (Array.isArray(data.subscriptions)) updateData('subscriptions', mergeSubscriptionsUnique(subscriptions, data.subscriptions));
+        if (Array.isArray(data.multicastTargets)) updateData('multicastTargets', mergeMulticastTargetsByTopic(multicastTargets, data.multicastTargets));
         addLog('system', '', '备份导入完成');
-      });
+      }, { confirmText: '确认导入', confirmVariant: 'primary' });
     } catch (err) {
       addLog('error', '', `导入失败: ${String(err?.message || err)}`);
     }
@@ -790,8 +877,18 @@ export default function MqttDebugger() {
   const openInputModal = (title, defaultValue, onConfirm) => {
     setModal({ open: true, type: 'input', title, inputValue: defaultValue, onConfirm });
   };
-  const openConfirmModal = (title, onConfirm) => {
-    setModal({ open: true, type: 'confirm', title, inputValue: '', onConfirm });
+  const openConfirmModal = (title, onConfirm, opts = {}) => {
+    const { confirmText, confirmVariant } = opts || {};
+    setModal({
+      open: true,
+      type: 'confirm',
+      title,
+      inputValue: '',
+      onConfirm,
+      // KISS: confirm 弹窗默认走“普通确认”，只有显式指定才走 danger。
+      confirmText: confirmText ?? '确定',
+      confirmVariant: confirmVariant === 'danger' ? 'danger' : 'primary',
+    });
   };
   const handleModalSubmit = () => {
     if (modal.onConfirm) modal.onConfirm(modal.inputValue);
@@ -849,7 +946,7 @@ export default function MqttDebugger() {
       const newConfigs = savedConfigs.filter(c => c.name !== connection.name);
       updateData('configs', newConfigs);
       setConnection({ ...connection, name: '' });
-    });
+    }, { confirmText: '确定删除', confirmVariant: 'danger' });
   };
 
   const handleSaveAction = () => {
@@ -922,13 +1019,95 @@ export default function MqttDebugger() {
     return false;
   };
 
+  const parseTopicList = (raw) => {
+    const s = String(raw ?? '').trim();
+    if (!s) return [];
+
+    // KISS: 支持用逗号/分号分隔多个 Topic，用于“群发”。
+    // 不用空格分割，避免误伤包含空格的 Topic（虽然不常见）。
+    const parts = s
+      .split(/[,\n\r;]+/g)
+      .map((x) => String(x).trim())
+      .filter(Boolean);
+
+    const seen = new Set();
+    const out = [];
+    for (const p of parts) {
+      if (seen.has(p)) continue;
+      seen.add(p);
+      out.push(p);
+    }
+    return out;
+  };
+
+  const getSelectedMulticastTopics = () => {
+    const selected = new Set((multicastSelectedIds || []).map((x) => Number(x)));
+    const topics = (multicastTargets || [])
+      .filter((t) => selected.has(Number(t?.id)))
+      .map((t) => String(t?.topic || '').trim())
+      .filter(Boolean);
+
+    // 兜底去重，避免“选中列表”和“targets”异常时重复发
+    const seen = new Set();
+    const out = [];
+    for (const t of topics) {
+      if (seen.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+    }
+    return out;
+  };
+
+  const sendToSelectedMulticastTargets = ({ title, payload, qos, retain }) => {
+    if (!client?.connected) return addLog('error', '', '请先连接服务器');
+    const topics = getSelectedMulticastTopics();
+    if (topics.length === 0) return addLog('error', '', '未选择群发目标，请先在“目标”里勾选');
+
+    const topicKey = `multicast|${topics.join('|')}`;
+    if (shouldDropDuplicateManualPublish(topicKey, payload, qos, retain)) return;
+
+    const doSend = () => {
+      addLog('system', '', `${title || '群发'}（${topics.length} 个目标）`);
+      topics.forEach((topic) => {
+        client.publish(topic, payload, { qos, retain }, (err) => {
+          if (err) addLog('error', topic, `${title || '群发'} 发送失败: ${err.message}`);
+          else addLog('sent', topic, payload, title ? `指令: ${title}` : `QoS: ${qos}`);
+        });
+      });
+    };
+
+    if (topics.length > 1) {
+      // KISS: 默认 title="群发" 时不显示“将‘群发’群发到…”，避免语义重复。
+      const normalizedTitle = String(title || '').trim();
+      const showTitle = normalizedTitle && normalizedTitle !== '群发';
+      openConfirmModal(
+        `确认${showTitle ? `将“${normalizedTitle}”` : ''}群发到 ${topics.length} 个目标？`,
+        doSend,
+        { confirmText: '确认发送', confirmVariant: 'primary' }
+      );
+    }
+    else doSend();
+  };
+
   const handleFireAction = (action) => {
     if (!client || !client.connected) return addLog('error', '', '请先连接服务器');
+
+    const topics = parseTopicList(action?.topic);
+    if (topics.length === 0) return addLog('error', '', '指令 Topic 为空');
+
     const payload = action.payload;
-    if (shouldDropDuplicateManualPublish(action.topic, payload, action.qos, action.retain)) return;
-    client.publish(action.topic, payload, { qos: action.qos, retain: action.retain }, (err) => {
-      if (err) addLog('error', action.topic, `指令 "${action.name}" 发送失败: ${err.message}`);
-      else addLog('sent', action.topic, payload, `指令: ${action.name}`);
+    const topicKey = topics.length === 1 ? topics[0] : topics.join('|');
+    if (shouldDropDuplicateManualPublish(topicKey, payload, action.qos, action.retain)) return;
+
+    if (topics.length > 1) {
+      addLog('system', '', `群发指令: ${action.name}（${topics.length} 个 Topic）`);
+    }
+
+    topics.forEach((topic) => {
+      client.publish(topic, payload, { qos: action.qos, retain: action.retain }, (err) => {
+        if (err) addLog('error', topic, `指令 "${action.name}" 发送失败: ${err.message}`);
+        else addLog('sent', topic, payload, `指令: ${action.name}`);
+      });
     });
   };
 
@@ -971,7 +1150,7 @@ export default function MqttDebugger() {
     openConfirmModal("确定删除此快捷指令?", () => {
       const newActions = quickActions.filter(t => t.id !== id);
       updateData('actions', newActions);
-    });
+    }, { confirmText: '确定删除', confirmVariant: 'danger' });
   };
 
   const handleRenameAction = (action, e) => {
@@ -994,6 +1173,86 @@ export default function MqttDebugger() {
         a.id === action.id ? { ...a, name: trimmedName } : a
       );
       updateData('actions', updatedActions);
+    });
+  };
+
+  // --- 群发目标管理 ---
+  const normalizeMulticastTopic = (t) => String(t || '').trim();
+
+  const upsertMulticastTargetsFromTopics = (topics, opts = {}) => {
+    const { selectAdded = true } = opts;
+    const list = (topics || []).map(normalizeMulticastTopic).filter(Boolean);
+    if (list.length === 0) return;
+
+    const byTopic = new Map((multicastTargets || []).map((t) => [normalizeMulticastTopic(t?.topic), t]).filter(([k]) => k));
+    const addedIds = [];
+    const touchedIds = [];
+    for (const topic of list) {
+      const existing = byTopic.get(topic);
+      if (existing) {
+        touchedIds.push(Number(existing?.id));
+        continue;
+      }
+      const id = Date.now() + Math.floor(Math.random() * 1000);
+      byTopic.set(topic, { id, name: topic, topic });
+      addedIds.push(id);
+      touchedIds.push(Number(id));
+    }
+
+    if (addedIds.length > 0) {
+      updateData('multicastTargets', Array.from(byTopic.values()));
+      addLog('system', '', `已添加群发目标：${addedIds.length} 个`);
+    }
+
+    if (selectAdded && touchedIds.length > 0) {
+      setMulticastSelectedIds((prev) => {
+        const set = new Set((prev || []).map((x) => Number(x)));
+        touchedIds.forEach((id) => {
+          if (Number.isFinite(id)) set.add(Number(id));
+        });
+        return Array.from(set);
+      });
+    }
+  };
+
+  const toggleMulticastTargetSelected = (id) => {
+    const n = Number(id);
+    if (!Number.isFinite(n)) return;
+    setMulticastSelectedIds((prev) => {
+      const set = new Set((prev || []).map((x) => Number(x)));
+      if (set.has(n)) set.delete(n);
+      else set.add(n);
+      return Array.from(set);
+    });
+  };
+
+  const selectAllMulticastTargets = () => {
+    const ids = (multicastTargets || []).map((t) => Number(t?.id)).filter((x) => Number.isFinite(x));
+    setMulticastSelectedIds(Array.from(new Set(ids)));
+  };
+
+  const clearMulticastSelection = () => {
+    setMulticastSelectedIds([]);
+  };
+
+  const deleteMulticastTarget = (id) => {
+    const n = Number(id);
+    openConfirmModal('确定删除该群发目标？', () => {
+      const next = (multicastTargets || []).filter((t) => Number(t?.id) !== n);
+      updateData('multicastTargets', next);
+      setMulticastSelectedIds((prev) => (prev || []).filter((x) => Number(x) !== n));
+    }, { confirmText: '确定删除', confirmVariant: 'danger' });
+  };
+
+  const renameMulticastTarget = (target, e) => {
+    if (e) e.stopPropagation();
+    const id = Number(target?.id);
+    if (!Number.isFinite(id)) return;
+    openInputModal('修改目标名称', String(target?.name || ''), (newName) => {
+      const name = String(newName || '').trim();
+      if (!name) return;
+      const next = (multicastTargets || []).map((t) => (Number(t?.id) === id ? { ...t, name } : t));
+      updateData('multicastTargets', next);
     });
   };
 
@@ -1524,19 +1783,29 @@ export default function MqttDebugger() {
 
   const handlePublish = () => {
     if (!client?.connected) return addLog('error', '', '请先连接');
-    if (!pubTopic) return addLog('error', '', '请输入 Topic');
 
+    const topics = parseTopicList(pubTopic);
+    if (topics.length === 0) return addLog('error', '', '请输入 Topic');
 
     const parsedMessage = pubMessage;
-    if (shouldDropDuplicateManualPublish(pubTopic, parsedMessage, pubQoS, pubRetain)) return;
+    const topicKey = topics.length === 1 ? topics[0] : topics.join('|');
+    if (shouldDropDuplicateManualPublish(topicKey, parsedMessage, pubQoS, pubRetain)) return;
 
-    client.publish(pubTopic, parsedMessage, { qos: pubQoS, retain: pubRetain }, e => {
-      if (e) {
-        addLog('error', pubTopic, e.message);
-      } else {
-        addLog('sent', pubTopic, parsedMessage, `QoS: ${pubQoS}`);
-      }
-    });
+    const doPublish = () => {
+      if (topics.length > 1) addLog('system', '', `群发: ${topics.length} 个 Topic（QoS ${pubQoS}${pubRetain ? ' · Retain' : ''}）`);
+      topics.forEach((topic) => {
+        client.publish(topic, parsedMessage, { qos: pubQoS, retain: pubRetain }, e => {
+          if (e) addLog('error', topic, e.message);
+          else addLog('sent', topic, parsedMessage, `QoS: ${pubQoS}`);
+        });
+      });
+    };
+
+    if (topics.length > 1) {
+      openConfirmModal(`确认群发到 ${topics.length} 个 Topic？`, doPublish, { confirmText: '确认发送', confirmVariant: 'primary' });
+    } else {
+      doPublish();
+    }
   };
 
   handleConnectRef.current = handleConnect;
@@ -1577,17 +1846,20 @@ export default function MqttDebugger() {
     } else {
       // 开始定时
       if (!client?.connected) return addLog('error', '', '请先连接服务器');
-      if (!pubTopic) return addLog('error', '', '请输入 Topic');
+      const topics = parseTopicList(pubTopic);
+      if (topics.length === 0) return addLog('error', '', '请输入 Topic');
 
       const intervalMs = syncTimerIntervalFromInput();
       setTimerEnabled(true);
-      addLog('system', '', `定时发送已启动，间隔 ${intervalMs}ms`);
+      addLog('system', '', `定时发送已启动，间隔 ${intervalMs}ms${topics.length > 1 ? `（${topics.length} 个 Topic）` : ''}`);
 
       timerRef.current = setInterval(() => {
         const parsedMessage = pubMessage;
-        client.publish(pubTopic, parsedMessage, { qos: pubQoS, retain: pubRetain }, e => {
-          if (e) addLog('error', pubTopic, e.message);
-          else addLog('sent', pubTopic, parsedMessage, `定时发送 QoS: ${pubQoS}`);
+        topics.forEach((topic) => {
+          client.publish(topic, parsedMessage, { qos: pubQoS, retain: pubRetain }, e => {
+            if (e) addLog('error', topic, e.message);
+            else addLog('sent', topic, parsedMessage, `定时发送 QoS: ${pubQoS}`);
+          });
         });
       }, intervalMs);
     }
@@ -1612,6 +1884,12 @@ export default function MqttDebugger() {
         e.preventDefault();
         setShowQuickActionsPanel(false);
         setQuickActionQuery('');
+        return;
+      }
+      if (showMulticastPanel && e.key === 'Escape') {
+        e.preventDefault();
+        setShowMulticastPanel(false);
+        setMulticastQuery('');
         return;
       }
       // Ctrl/Cmd + Enter: 发送消息
@@ -1642,7 +1920,7 @@ export default function MqttDebugger() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [client, connectStatus, reconnectCount, eventCenterOpen, pubTopic, pubMessage, pubQoS, pubRetain, showQuickActionsPanel]);
+  }, [client, connectStatus, reconnectCount, eventCenterOpen, pubTopic, pubMessage, pubQoS, pubRetain, showQuickActionsPanel, showMulticastPanel]);
 
   // 重置统计
   const resetStats = () => {
@@ -1778,7 +2056,20 @@ export default function MqttDebugger() {
             )}
             <div className="flex justify-end gap-3">
               <button onClick={() => setModal({...modal, open: false})} className={`px-4 py-2 ${t.bgTertiary} ${t.bgHover} rounded-xl text-sm font-medium transition-colors ${t.textSecondary}`}>取消</button>
-              <button onClick={handleModalSubmit} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg ${modal.type === 'confirm' ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'}`}>{modal.type === 'confirm' ? '确定删除' : '确定保存'}</button>
+              <button
+                onClick={handleModalSubmit}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg ${
+                  modal.type === 'confirm'
+                    ? (
+                      modal.confirmVariant === 'danger'
+                        ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20'
+                        : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
+                    )
+                    : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
+                }`}
+              >
+                {modal.type === 'confirm' ? (modal.confirmText || '确定') : '确定保存'}
+              </button>
             </div>
           </div>
         </div>
@@ -1877,83 +2168,193 @@ export default function MqttDebugger() {
                 ? recentActionIds.map((id) => all.find((a) => a.id === id)).filter(Boolean).slice(0, 10)
                 : [];
 
-              const Section = ({ title, items }) => (
-                <div className="space-y-2">
-                  <div className={`text-xs font-semibold ${t.textMuted} px-1`}>{title}</div>
-                  <div className="space-y-2">
-                    {items.map((action) => (
-                      <div
-                        key={action.id}
-                        onClick={() => sendQuickAction(action)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            sendQuickAction(action);
-                          }
-                        }}
-                        role="button"
-                        tabIndex={0}
-                        className={`w-full text-left ${t.card} border hover:border-amber-500/30 rounded-xl p-3 transition-all ${t.bgHover}`}
-                        title="点击直接发送"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className={`font-bold text-sm ${t.text} truncate`}>{action.name}</div>
-                            <div className={`text-[11px] ${t.textMuted} truncate mt-1`}>{action.topic}</div>
-                            <div className={`text-[11px] ${t.textSecondary} truncate mt-1 font-mono`}>{String(action.payload || '')}</div>
-                          </div>
-                          <div className="shrink-0 flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); toggleActionPinned(action.id); }}
-                              className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
-                              title={action.pinned ? '取消置顶' : '置顶'}
-                            >
-                              <Star className={`w-4 h-4 ${action.pinned ? (theme === 'light' ? 'text-amber-600' : 'text-amber-300') : t.textMuted}`} fill={action.pinned ? 'currentColor' : 'none'} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => handleRenameAction(action, e)}
-                              className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
-                              title="重命名"
-                            >
-                              <Edit2 className={`w-4 h-4 ${t.textMuted}`} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleLoadAction(action);
-                                setShowQuickActionsPanel(false);
-                                setQuickActionQuery('');
-                              }}
-                              className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
-                              title="填充到发送区"
-                            >
-                              <Copy className={`w-4 h-4 ${t.textMuted}`} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => handleDeleteAction(action.id, e)}
-                              className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
-                              title="删除"
-                            >
-                              <Trash2 className={`w-4 h-4 ${t.textMuted}`} />
-                            </button>
-                            <span className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5`}>
-                              QoS {action.qos ?? 0}{action.retain ? ' · Retain' : ''}
-                            </span>
-                            <div className={`px-3 py-1 rounded-lg text-xs font-bold ${theme === 'light' ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/20 text-amber-300'} flex items-center gap-1`}>
-                              <Zap className="w-3 h-3" />
-                              发送
-                            </div>
-                          </div>
-                        </div>
+              const splitNameByPrefix = (rawName) => {
+                const name = String(rawName || '').trim();
+                if (!name) return { group: '未分组', displayName: '' };
+
+                // 约定：用 “前缀/名称” 或 “前缀:名称” 来自动分组（便于卡片化管理）。
+                const candidates = ['/', '::', ':', '：'];
+                let best = null; // { idx, sep }
+                for (const sep of candidates) {
+                  const idx = name.indexOf(sep);
+                  if (idx <= 0 || idx >= name.length - sep.length) continue;
+                  if (!best || idx < best.idx || (idx === best.idx && sep.length > best.sep.length)) {
+                    best = { idx, sep };
+                  }
+                }
+
+                if (!best) return { group: '未分组', displayName: name };
+                const group = name.slice(0, best.idx).trim();
+                const displayName = name.slice(best.idx + best.sep.length).trim();
+                if (!group || !displayName) return { group: '未分组', displayName: name };
+                return { group, displayName };
+              };
+
+              const ActionRow = ({ action, displayNameOverride }) => (
+                <div
+                  onClick={() => sendQuickAction(action)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      sendQuickAction(action);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  className={`w-full text-left ${t.card} border hover:border-amber-500/30 rounded-xl p-3 transition-all ${t.bgHover}`}
+                  title="点击直接发送"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className={`font-bold text-sm ${t.text} truncate`} title={action.name}>
+                        {displayNameOverride || action.name}
                       </div>
-                    ))}
+                      <div className={`text-[11px] ${t.textMuted} truncate mt-1`}>{action.topic}</div>
+                      <div className={`text-[11px] ${t.textSecondary} truncate mt-1 font-mono`}>{String(action.payload || '')}</div>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); toggleActionPinned(action.id); }}
+                        className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                        title={action.pinned ? '取消置顶' : '置顶'}
+                      >
+                        <Star className={`w-4 h-4 ${action.pinned ? (theme === 'light' ? 'text-amber-600' : 'text-amber-300') : t.textMuted}`} fill={action.pinned ? 'currentColor' : 'none'} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const topics = getSelectedMulticastTopics();
+                          if (topics.length === 0) {
+                            setShowMulticastPanel(true);
+                            return;
+                          }
+                          recordRecentAction(action.id);
+                          sendToSelectedMulticastTargets({
+                            title: action.name,
+                            payload: action.payload,
+                            qos: action.qos ?? 0,
+                            retain: !!action.retain,
+                          });
+                        }}
+                        className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                        title="群发到已选目标"
+                      >
+                        <Share2 className={`w-4 h-4 ${t.textMuted}`} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleRenameAction(action, e)}
+                        className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                        title="重命名"
+                      >
+                        <Edit2 className={`w-4 h-4 ${t.textMuted}`} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleLoadAction(action);
+                          setShowQuickActionsPanel(false);
+                          setQuickActionQuery('');
+                        }}
+                        className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                        title="填充到发送区"
+                      >
+                        <Copy className={`w-4 h-4 ${t.textMuted}`} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteAction(action.id, e)}
+                        className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                        title="删除"
+                      >
+                        <Trash2 className={`w-4 h-4 ${t.textMuted}`} />
+                      </button>
+                      <span className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5`}>
+                        QoS {action.qos ?? 0}{action.retain ? ' · Retain' : ''}
+                      </span>
+                      <div className={`px-3 py-1 rounded-lg text-xs font-bold ${theme === 'light' ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/20 text-amber-300'} flex items-center gap-1`}>
+                        <Zap className="w-3 h-3" />
+                        发送
+                      </div>
+                    </div>
                   </div>
                 </div>
               );
+
+              const Section = ({ title, items, grouped = false }) => {
+                if (!grouped) {
+                  return (
+                    <div className="space-y-2">
+                      <div className={`text-xs font-semibold ${t.textMuted} px-1`}>{title}</div>
+                      <div className="space-y-2">
+                        {items.map((action) => (
+                          <ActionRow key={action.id} action={action} />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                const groupedMap = new Map();
+                for (const action of items) {
+                  const { group, displayName } = splitNameByPrefix(action?.name);
+                  if (!groupedMap.has(group)) groupedMap.set(group, []);
+                  groupedMap.get(group).push({ action, displayName });
+                }
+
+                const groups = Array.from(groupedMap.entries());
+
+                return (
+                  <div className="space-y-2">
+                    <div className={`text-xs font-semibold ${t.textMuted} px-1`}>{title}</div>
+                    <div className="space-y-3">
+                      {groups.map(([group, rows]) => {
+                        const isCollapsed = !!quickActionGroupCollapsed?.[group];
+                        return (
+                          <div key={group} className={`${t.card} border rounded-xl p-3`}>
+                            <button
+                              type="button"
+                              onClick={() => setQuickActionGroupCollapsed((prev) => ({ ...(prev || {}), [group]: !prev?.[group] }))}
+                              className={`w-full flex items-center justify-between gap-3 ${t.bgHover} rounded-lg px-2 py-1.5 transition-colors`}
+                              title={isCollapsed ? '展开' : '收起'}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {isCollapsed ? (
+                                  <ChevronDown className={`w-4 h-4 ${t.textMuted}`} />
+                                ) : (
+                                  <ChevronUp className={`w-4 h-4 ${t.textMuted}`} />
+                                )}
+                                <div className={`text-sm font-bold ${t.text} truncate`}>{group}</div>
+                                <div className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5 shrink-0`}>
+                                  {rows.length}
+                                </div>
+                              </div>
+                              <div className={`text-[11px] ${t.textMuted} shrink-0`}>
+                                {isCollapsed ? '展开' : '收起'}
+                              </div>
+                            </button>
+
+                            {!isCollapsed && (
+                              <div className="space-y-2 mt-3">
+                                {rows.map(({ action, displayName }) => (
+                                  <ActionRow
+                                    key={action.id}
+                                    action={action}
+                                    displayNameOverride={displayName || action.name}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              };
 
               return (
                 <div className="space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
@@ -1965,13 +2366,211 @@ export default function MqttDebugger() {
 
                   {pinned.length > 0 && <Section title={`置顶（${pinned.length}）`} items={pinned} />}
                   {recent.length > 0 && <Section title="最近使用" items={recent} />}
-                  <Section title={q ? `搜索结果（${filtered.length}）` : `全部（${filtered.length}）`} items={filtered} />
+                  <Section title={q ? `搜索结果（${filtered.length}）` : `全部（${filtered.length}）`} items={filtered} grouped={!q && filtered.length > 0} />
 
                   {filtered.length === 0 && (
                     <div className={`text-center py-10 border border-dashed ${t.border} rounded-xl text-sm ${t.textMuted}`}>
                       没有匹配的快捷指令
                     </div>
                   )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {showMulticastPanel && (
+        <div className="fixed inset-0 bg-black/50 z-[66] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
+          <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-2xl w-full border ${t.border} p-6`}>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}>
+                <Share2 className="w-5 h-5 text-indigo-500" />
+                群发目标
+              </h3>
+              <button
+                onClick={() => { setShowMulticastPanel(false); setMulticastQuery(''); }}
+                className={`${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded-lg transition-colors`}
+                title="关闭 (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex gap-2 mb-4">
+              <div className={`flex-1 flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2`}>
+                <Search className={`w-4 h-4 ${t.textMuted}`} />
+                <input
+                  autoFocus
+                  value={multicastQuery}
+                  onChange={(e) => setMulticastQuery(e.target.value)}
+                  placeholder="搜索 名称 / Topic..."
+                  className={`flex-1 bg-transparent text-sm outline-none ${t.text}`}
+                />
+              </div>
+              <button
+                onClick={() => setMulticastQuery('')}
+                className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${t.bgTertiary} ${t.textSecondary} border ${t.border} ${t.bgHover}`}
+              >
+                清空
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 mb-4">
+              <button
+                type="button"
+                onClick={selectAllMulticastTargets}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all ${t.bgTertiary} ${t.textSecondary} border ${t.border} ${t.bgHover}`}
+                title="全选"
+              >
+                全选
+              </button>
+              <button
+                type="button"
+                onClick={clearMulticastSelection}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all ${t.bgTertiary} ${t.textSecondary} border ${t.border} ${t.bgHover}`}
+                title="全不选"
+              >
+                全不选
+              </button>
+              <button
+                type="button"
+                onClick={() => upsertMulticastTargetsFromTopics(subscriptions, { selectAdded: true })}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all ${t.bgTertiary} ${t.textSecondary} border ${t.border} ${t.bgHover}`}
+                title="从订阅列表导入（并选中）"
+              >
+                从订阅导入
+              </button>
+              <button
+                type="button"
+                onClick={() => upsertMulticastTargetsFromTopics(parseTopicList(pubTopic), { selectAdded: true })}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all ${t.bgTertiary} ${t.textSecondary} border ${t.border} ${t.bgHover}`}
+                title="从当前 Topic 导入（支持逗号/分号）"
+              >
+                从当前Topic导入
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  openConfirmModal('确定清空全部群发目标？', () => {
+                    updateData('multicastTargets', []);
+                    setMulticastSelectedIds([]);
+                  }, { confirmText: '确定清空', confirmVariant: 'danger' });
+                }}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all border ${
+                  theme === 'light'
+                    ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                    : 'bg-rose-500/10 text-rose-300 border-rose-500/20 hover:bg-rose-500/20'
+                }`}
+                title="清空目标列表"
+              >
+                清空目标
+              </button>
+            </div>
+
+            {(() => {
+              const q = (multicastQuery || '').trim().toLowerCase();
+              const all = Array.isArray(multicastTargets) ? multicastTargets : [];
+              const match = (tgt) => `${tgt?.name || ''} ${tgt?.topic || ''}`.toLowerCase().includes(q);
+              const filtered = q ? all.filter(match) : all;
+              const selected = new Set((multicastSelectedIds || []).map((x) => Number(x)));
+              const selectedCount = (multicastTargets || []).filter((t) => selected.has(Number(t?.id))).length;
+
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between px-1">
+                    <div className={`text-xs font-semibold ${t.textMuted}`}>
+                      {q ? `搜索结果（${filtered.length}）` : `全部（${filtered.length}）`}
+                    </div>
+                    <div className={`text-xs ${t.textMuted}`}>
+                      已选 {selectedCount} / {all.length}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 max-h-[50vh] overflow-y-auto custom-scrollbar pr-1">
+                    {filtered.map((tgt) => {
+                      const id = Number(tgt?.id);
+                      const checked = selected.has(id);
+                      return (
+                        <div
+                          key={String(tgt?.id)}
+                          className={`w-full ${t.card} border rounded-xl p-3 transition-all`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <label className="pt-1">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleMulticastTargetSelected(id)}
+                                className="rounded bg-slate-200 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-indigo-600 w-4 h-4"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => toggleMulticastTargetSelected(id)}
+                              className="flex-1 min-w-0 text-left"
+                              title="点击选中/取消"
+                            >
+                              <div className={`font-bold text-sm ${t.text} truncate`}>{String(tgt?.name || '') || '未命名'}</div>
+                              <div className={`text-[11px] ${t.textMuted} truncate mt-1 font-mono`}>{String(tgt?.topic || '')}</div>
+                            </button>
+                            <div className="shrink-0 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => renameMulticastTarget(tgt, e)}
+                                className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                                title="重命名"
+                              >
+                                <Edit2 className={`w-4 h-4 ${t.textMuted}`} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteMulticastTarget(id)}
+                                className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                                title="删除"
+                              >
+                                <Trash2 className={`w-4 h-4 ${t.textMuted}`} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {filtered.length === 0 && (
+                      <div className={`text-center py-10 border border-dashed ${t.border} rounded-xl text-sm ${t.textMuted}`}>
+                        没有目标。可点“从订阅导入”或“从当前Topic导入”。
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={`pt-3 border-t ${t.border} flex flex-wrap justify-end gap-2`}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const topics = getSelectedMulticastTopics();
+                        if (topics.length === 0) return addLog('error', '', '未选择群发目标');
+                        setPubTopic(topics.join(','));
+                        setShowMulticastPanel(false);
+                        setMulticastQuery('');
+                      }}
+                      className={`px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg ${t.bgTertiary} ${t.bgHover} border ${t.border} ${t.text}`}
+                      title="把选中的目标 Topic 应用到发送区"
+                    >
+                      应用到Topic
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sendToSelectedMulticastTargets({ title: '群发', payload: pubMessage, qos: pubQoS, retain: pubRetain });
+                      }}
+                      disabled={!client?.connected}
+                      className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="使用当前 Payload 群发到已选目标"
+                    >
+                      群发当前Payload
+                    </button>
+                  </div>
                 </div>
               );
             })()}
@@ -2589,7 +3188,7 @@ export default function MqttDebugger() {
                 value={pubTopic}
                 onChange={(e) => setPubTopic(e.target.value)}
                 className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm font-mono focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}
-                placeholder="Topic (e.g. test/topic)"
+                placeholder="Topic（如 test/topic；多个 Topic 用 , 或 ; 分隔以群发）"
               />
 
               <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2`}>
@@ -2713,6 +3312,16 @@ export default function MqttDebugger() {
                 title={'\u5c55\u5f00\u7f16\u8f91'}
               >
                 <Maximize2 className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMulticastPanel(true);
+                }}
+                className={`w-10 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-xl ${t.textSecondary} hover:${t.text} transition-all flex items-center justify-center`}
+                title={getSelectedMulticastTopics().length > 0 ? `群发目标（已选 ${getSelectedMulticastTopics().length}）` : '群发目标'}
+              >
+                <Share2 className="w-4 h-4" />
               </button>
               <button
                 onClick={handlePublish}
