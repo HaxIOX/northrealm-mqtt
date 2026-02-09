@@ -1373,6 +1373,7 @@ export default function MqttDebugger() {
   const diagnoseConnectionError = (err) => {
     const errorMsg = err.message || err.toString();
     const errorCode = err.code;
+    const lowerMsg = String(errorMsg || '').toLowerCase();
     let diagnosis = '';
 
     // 根据错误代码进行诊断
@@ -1394,8 +1395,16 @@ export default function MqttDebugger() {
       diagnosis = '💡 诊断: 连接超时\n   - 检查服务器地址和端口\n   - 检查网络连接\n   - 检查防火墙设置';
     } else if (errorMsg.includes('certificate') || errorMsg.includes('SSL') || errorMsg.includes('TLS')) {
       diagnosis = '💡 诊断: SSL/TLS 证书问题\n   - 自签名证书不被信任\n   - 尝试使用非加密协议 (mqtt:// 或 ws://)';
-    } else if (errorMsg.includes('authorized') || errorMsg.includes('authentication')) {
-      diagnosis = '💡 诊断: 认证失败\n   - 用户名或密码错误\n   - 服务器要求认证但未提供凭据';
+    } else if (
+      errorMsg.includes('无权连接') ||
+      lowerMsg.includes('not authorized') ||
+      lowerMsg.includes('authorized') ||
+      lowerMsg.includes('authentication') ||
+      lowerMsg.includes('bad user name') ||
+      lowerMsg.includes('bad username') ||
+      lowerMsg.includes('bad password')
+    ) {
+      diagnosis = '💡 诊断: 认证/权限失败\n   - 用户名或密码错误（或密码为空）\n   - Broker ACL 不允许该 ClientID/Topic\n   - 服务器要求认证但未提供凭据';
     } else if (errorMsg.includes('protocol')) {
       diagnosis = '💡 诊断: 协议错误\n   - MQTT 协议版本不匹配\n   - 服务器可能不是标准 MQTT 服务器';
     }
@@ -1611,6 +1620,9 @@ export default function MqttDebugger() {
         const errorDetails = {
           message: err.message,
           code: err.code,
+          reasonCode: err.reasonCode,
+          details: err.details,
+          exception: err.exception,
           errno: err.errno,
           syscall: err.syscall,
           address: err.address,

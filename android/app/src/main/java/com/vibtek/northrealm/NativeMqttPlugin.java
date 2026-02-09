@@ -29,8 +29,25 @@ public class NativeMqttPlugin extends Plugin {
 
   private void emitError(String message, Throwable t) {
     JSObject obj = new JSObject();
-    obj.put("message", message != null ? message : "Native MQTT error");
-    if (t != null) obj.put("details", String.valueOf(t));
+    String msg = message != null ? message : "Native MQTT error";
+    if (t != null && t.getMessage() != null && !t.getMessage().isEmpty() && !msg.contains(t.getMessage())) {
+      msg = msg + ": " + t.getMessage();
+    }
+    obj.put("message", msg);
+    if (t != null) {
+      obj.put("exception", t.getClass().getName());
+      obj.put("details", String.valueOf(t));
+      if (t instanceof MqttException) {
+        try {
+          int reasonCode = ((MqttException) t).getReasonCode();
+          obj.put("reasonCode", reasonCode);
+          // Keep compatibility with JS error parsing that expects err.code sometimes.
+          obj.put("code", reasonCode);
+        } catch (Exception ignored) {
+          // ignore
+        }
+      }
+    }
     notifyListeners("error", obj);
   }
 

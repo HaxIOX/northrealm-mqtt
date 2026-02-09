@@ -67,7 +67,10 @@ class MobileMqttClient {
 
     await add('error', (ev) => {
       const err = new Error(String(ev?.message || ev?.error || 'Native MQTT error'));
-      if (ev?.code) err.code = ev.code;
+      if (ev?.code != null) err.code = ev.code;
+      if (ev?.reasonCode != null) err.reasonCode = ev.reasonCode;
+      if (ev?.details != null) err.details = String(ev.details);
+      if (ev?.exception != null) err.exception = String(ev.exception);
       this._emit('error', err);
     });
 
@@ -94,16 +97,26 @@ class MobileMqttClient {
     const keepalive = Number(o.keepalive ?? 60);
     const clean = o.clean !== false;
 
-    await NativeMqtt.connect({
-      url: this._url,
-      clientId: String(o.clientId || ''),
-      username: String(o.username || ''),
-      password: String(o.password || ''),
-      clean,
-      keepalive,
-      connectTimeoutMs: Number.isFinite(connectTimeout) ? connectTimeout : 10_000,
-      reconnectPeriodMs: Number.isFinite(reconnectPeriod) ? reconnectPeriod : 0,
-    });
+    try {
+      await NativeMqtt.connect({
+        url: this._url,
+        clientId: String(o.clientId || ''),
+        username: String(o.username || ''),
+        password: String(o.password || ''),
+        clean,
+        keepalive,
+        connectTimeoutMs: Number.isFinite(connectTimeout) ? connectTimeout : 10_000,
+        reconnectPeriodMs: Number.isFinite(reconnectPeriod) ? reconnectPeriod : 0,
+      });
+    } catch (e) {
+      // Most errors are emitted via native "error" event (single source of truth).
+      // Only fallback-emit when the plugin bridge itself is missing.
+      const msg = String(e?.message || e || '');
+      if (/plugin is not implemented/i.test(msg)) {
+        this._emit('error', toError(e));
+      }
+      throw e;
+    }
 
     return this;
   }
@@ -169,11 +182,8 @@ export function createMobileMqttLib() {
     connect: (url, opts) => {
       const c = new MobileMqttClient(url, opts);
       // Fire-and-forget: App listens for 'connect'/'error' events.
-      c.connect().catch((e) => {
-        c._emit('error', toError(e));
-      });
+      c.connect().catch(() => { /* handled by native events */ });
       return c;
     },
   };
 }
-
