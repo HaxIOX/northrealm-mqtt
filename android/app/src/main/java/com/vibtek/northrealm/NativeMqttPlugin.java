@@ -64,9 +64,12 @@ public class NativeMqttPlugin extends Plugin {
     int connectTimeoutMs = call.getInt("connectTimeoutMs", 10_000);
     int reconnectPeriodMs = call.getInt("reconnectPeriodMs", 0);
 
+    final String resolvedClientId = clientId;
+    final String resolvedServerUri = serverUri;
+
     final MqttAsyncClient nextClient;
     try {
-      nextClient = new MqttAsyncClient(serverUri, clientId, new MemoryPersistence());
+      nextClient = new MqttAsyncClient(resolvedServerUri, resolvedClientId, new MemoryPersistence());
     } catch (MqttException e) {
       call.reject("create client failed: " + e.getMessage());
       return;
@@ -161,8 +164,8 @@ public class NativeMqttPlugin extends Plugin {
         @Override
         public void onSuccess(IMqttToken asyncActionToken) {
           JSObject res = new JSObject();
-          res.put("clientId", clientId);
-          res.put("serverURI", serverUri);
+          res.put("clientId", resolvedClientId);
+          res.put("serverURI", resolvedServerUri);
           call.resolve(res);
         }
 
@@ -356,4 +359,3 @@ public class NativeMqttPlugin extends Plugin {
     }
   }
 }
-
