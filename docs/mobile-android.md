@@ -49,3 +49,23 @@ npm run android:open
 - Android 构建需要 Java 11+（推荐 JDK 17）与 Android SDK（通常由 Android Studio 配置）
 - 若你系统默认 Java 版本过旧（例如 Java 8），Gradle/AGP 会直接报错
 
+## 打包 APK（Debug）
+
+Windows PowerShell 示例（使用本仓库 `tools/` 里的 JDK/SDK）：
+```powershell
+Set-Location C:\Users\VIBTEK\Desktop\northrealm-mqtt
+
+$env:JAVA_HOME = "$PWD\tools\jdk-21.0.10+7"
+$env:ANDROID_SDK_ROOT = "$PWD\tools\android-sdk"
+$env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_SDK_ROOT\platform-tools;$env:ANDROID_SDK_ROOT\cmdline-tools\latest\bin;$env:Path"
+
+npm run android:sync
+Set-Location .\android
+.\gradlew.bat :app:assembleDebug --no-daemon --console=plain
+```
+
+APK 输出位置：
+`android/app/build/outputs/apk/debug/app-debug.apk`
+
+说明：
+- Release 包需要签名（keystore）；当前先以 Debug APK 为主（满足“可安装/可验证”）。
