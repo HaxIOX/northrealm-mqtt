@@ -184,7 +184,6 @@ export default function MqttDebugger() {
   const [mobileCommandsView, setMobileCommandsView] = useState('manual'); // 'manual' | 'quick'
   const [mobileSubEditorOpen, setMobileSubEditorOpen] = useState(false);
   const [mobileQuickQuery, setMobileQuickQuery] = useState('');
-  const [mobileConfigOpen, setMobileConfigOpen] = useState(false);
   const [quickActionGroupCollapsed, setQuickActionGroupCollapsed] = useState(() => {
     try {
       const raw = localStorage.getItem('mqtt_quick_action_group_collapsed');
@@ -1996,6 +1995,28 @@ export default function MqttDebugger() {
   // KISS: action id comparisons should be stable even if ids are number/string across versions/backups.
   const actionIdKey = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
 
+  // 约定：用 “前缀/名称” 或 “前缀:名称” 来自动分组（便于快捷指令卡片化管理）。
+  const splitActionNameByPrefix = (rawName) => {
+    const name = String(rawName || '').trim();
+    if (!name) return { group: '未分组', displayName: '' };
+
+    const candidates = ['/', '::', ':', '：'];
+    let best = null; // { idx, sep }
+    for (const sep of candidates) {
+      const idx = name.indexOf(sep);
+      if (idx <= 0 || idx >= name.length - sep.length) continue;
+      if (!best || idx < best.idx || (idx === best.idx && sep.length > best.sep.length)) {
+        best = { idx, sep };
+      }
+    }
+
+    if (!best) return { group: '未分组', displayName: name };
+    const group = name.slice(0, best.idx).trim();
+    const displayName = name.slice(best.idx + best.sep.length).trim();
+    if (!group || !displayName) return { group: '未分组', displayName: name };
+    return { group, displayName };
+  };
+
   const { messageLogs, eventLogs } = useMemo(() => {
     const msg = [];
     const evt = [];
@@ -2097,39 +2118,103 @@ export default function MqttDebugger() {
   };
 
   // --- Mobile views (KISS): bottom navigation + two screens (messages / commands) ---
-  const MobileConfigSheet = () => (
-    <div
-      className="fixed inset-0 bg-black/50 z-[85] flex items-end justify-center p-3 backdrop-blur-md animate-in fade-in duration-200"
-      onClick={() => setMobileConfigOpen(false)}
-      role="dialog"
-      aria-modal="true"
-    >
-      <div
-        className={`${t.bgSecondary} w-full max-w-xl rounded-2xl shadow-2xl border ${t.border} overflow-hidden`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className={`p-4 border-b ${t.border} flex items-center justify-between gap-3`}>
-          <div className="min-w-0">
-            <div className={`text-sm font-bold ${t.text}`}>连接配置</div>
-            <div className={`text-[11px] ${t.textMuted} truncate`}>
-              {connectStatus === 'connected'
-                ? `已连接：${connection.host}:${connection.port}`
-                : connectStatus === 'connecting'
-                  ? '连接中...'
-                  : '未连接'}
+  const MobileBottomNav = () => (
+    <nav className={`shrink-0 border-t ${t.border} ${t.bgSecondary} backdrop-blur-xl pb-[env(safe-area-inset-bottom)]`}>
+      <div className="grid grid-cols-3">
+        <button
+          type="button"
+          onClick={() => setMobileNav('messages')}
+          className={`py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${
+            mobileNav === 'messages'
+              ? (theme === 'light' ? 'text-indigo-700 bg-indigo-50' : 'text-indigo-300 bg-indigo-500/10')
+              : `${t.textMuted} ${t.bgHover}`
+          }`}
+        >
+          <MessageSquare className="w-4 h-4" /> 消息
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileNav('commands')}
+          className={`py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${
+            mobileNav === 'commands'
+              ? (theme === 'light' ? 'text-amber-700 bg-amber-50' : 'text-amber-300 bg-amber-500/10')
+              : `${t.textMuted} ${t.bgHover}`
+          }`}
+        >
+          <Send className="w-4 h-4" /> 指令
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileNav('config')}
+          className={`py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${
+            mobileNav === 'config'
+              ? (theme === 'light' ? 'text-slate-800 bg-slate-50' : 'text-slate-100 bg-slate-500/10')
+              : `${t.textMuted} ${t.bgHover}`
+          }`}
+        >
+          <Settings className="w-4 h-4" /> 配置
+        </button>
+      </div>
+    </nav>
+  );
+
+  const MobileConfigView = () => {
+    const connectBtnVariant =
+      connectStatus === 'connected'
+        ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20'
+        : connectStatus === 'connecting' || reconnectCount > 0
+          ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-500/20'
+          : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20';
+
+    const connectBtnText =
+      connectStatus === 'connected'
+        ? '断开连接'
+        : connectStatus === 'connecting' || reconnectCount > 0
+          ? '取消/停止重连'
+          : '连接';
+
+    const statusText =
+      connectStatus === 'connected'
+        ? `已连接：${connection.host}:${connection.port}`
+        : connectStatus === 'connecting'
+          ? '连接中...'
+          : reconnectCount > 0
+            ? `重连中（${reconnectCount}）`
+            : '未连接';
+
+    return (
+      <div className="flex-1 min-h-0 flex flex-col">
+        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 py-3`}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className={`text-sm font-bold ${t.text}`}>配置</div>
+              <div className={`text-[11px] ${t.textMuted} truncate`}>{statusText}</div>
+            </div>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className={`p-2 rounded-xl ${t.bgTertiary} ${t.bgHover} ${t.textSecondary} transition-all`}
+              title={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
+            >
+              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+          </div>
+        </header>
+
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+          <div className={`${t.card} border rounded-2xl p-4 space-y-3`}>
+            <button
+              type="button"
+              onClick={connectStatus === 'connected' || connectStatus === 'connecting' || reconnectCount > 0 ? handleDisconnect : handleConnect}
+              className={`w-full px-4 py-3 rounded-xl text-sm font-bold transition-all shadow-lg ${connectBtnVariant}`}
+            >
+              {connectBtnText}
+            </button>
+            <div className={`text-[11px] ${t.textMuted}`}>
+              协议版本：MQTT 3.1.1（v4）· 认证：用户名/密码
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setMobileConfigOpen(false)}
-            className={`p-2 ${t.bgTertiary} border ${t.border} rounded-xl ${t.textSecondary} hover:${t.text} ${t.bgHover} transition-all`}
-            title="关闭"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
 
-        <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar">
           <div className={`${t.card} border rounded-2xl p-4 space-y-3`}>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
@@ -2217,62 +2302,21 @@ export default function MqttDebugger() {
               <span>自动重连</span>
             </label>
           </div>
-        </div>
 
-        <div className={`p-4 border-t ${t.border} flex gap-3`}>
-          <button
-            type="button"
-            onClick={() => setMobileConfigOpen(false)}
-            className={`flex-1 px-4 py-2.5 ${t.bgTertiary} ${t.bgHover} rounded-xl text-sm font-bold transition-colors ${t.textSecondary}`}
-          >
-            关闭
-          </button>
-          <button
-            type="button"
-            onClick={connectStatus === 'connected' || connectStatus === 'connecting' || reconnectCount > 0 ? handleDisconnect : handleConnect}
-            className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-lg ${
-              connectStatus === 'connected'
-                ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20'
-                : connectStatus === 'connecting' || reconnectCount > 0
-                  ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-500/20'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20'
-            }`}
-          >
-            {connectStatus === 'connected' ? '断开' : connectStatus === 'connecting' || reconnectCount > 0 ? '取消/停止' : '连接'}
-          </button>
+          <div className={`${t.card} border rounded-2xl p-4`}>
+            <button
+              type="button"
+              onClick={() => setShowSyncModal(true)}
+              className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all ${t.bgTertiary} ${t.bgHover} border ${t.border} ${t.textSecondary}`}
+            >
+              <Cloud className="w-4 h-4" />
+              <span>同步与备份</span>
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
-
-  const MobileBottomNav = () => (
-    <nav className={`shrink-0 border-t ${t.border} ${t.bgSecondary} backdrop-blur-xl`}>
-      <div className="grid grid-cols-2">
-        <button
-          type="button"
-          onClick={() => setMobileNav('messages')}
-          className={`py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${
-            mobileNav === 'messages'
-              ? (theme === 'light' ? 'text-indigo-700 bg-indigo-50' : 'text-indigo-300 bg-indigo-500/10')
-              : `${t.textMuted} ${t.bgHover}`
-          }`}
-        >
-          <MessageSquare className="w-4 h-4" /> 消息
-        </button>
-        <button
-          type="button"
-          onClick={() => setMobileNav('commands')}
-          className={`py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${
-            mobileNav === 'commands'
-              ? (theme === 'light' ? 'text-amber-700 bg-amber-50' : 'text-amber-300 bg-amber-500/10')
-              : `${t.textMuted} ${t.bgHover}`
-          }`}
-        >
-          <Send className="w-4 h-4" /> 指令
-        </button>
-      </div>
-    </nav>
-  );
+    );
+  };
 
   const MobileMessagesView = () => {
     const receivedLogs = filteredMessageLogs.filter((l) => l && l.type === 'received');
@@ -2294,22 +2338,6 @@ export default function MqttDebugger() {
                 title="订阅主题"
               >
                 <Plus className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setMobileConfigOpen(true)}
-                className={`p-2 rounded-xl border ${t.border} ${t.bgTertiary} ${t.bgHover} ${t.textSecondary}`}
-                title="连接配置"
-              >
-                <Settings className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={toggleTheme}
-                className={`p-2 rounded-xl ${t.bgTertiary} ${t.bgHover} ${t.textSecondary} transition-all`}
-                title={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
-              >
-                {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
             </div>
           </div>
@@ -2441,17 +2469,54 @@ export default function MqttDebugger() {
     const match = (a) => `${a?.name || ''} ${a?.topic || ''} ${a?.payload || ''}`.toLowerCase().includes(q);
     const filtered = q ? all.filter(match) : all;
     const pinned = !q ? all.filter((a) => a && a.pinned) : [];
+    const recent = !q
+      ? (recentActionIds || []).map((id) => all.find((a) => actionIdKey(a?.id) === actionIdKey(id))).filter(Boolean).slice(0, 10)
+      : [];
 
-    const MobileActionRow = ({ action }) => (
-      <button
-        type="button"
+    const excludedIds = useMemo(() => {
+      if (q) return new Set();
+      const s = new Set();
+      for (const a of pinned) s.add(actionIdKey(a?.id));
+      for (const a of recent) s.add(actionIdKey(a?.id));
+      return s;
+    }, [q, pinned, recent]);
+
+    const listForGroups = q ? filtered : all.filter((a) => !excludedIds.has(actionIdKey(a?.id)));
+
+    const grouped = useMemo(() => {
+      const groupedMap = new Map();
+      for (const action of (listForGroups || [])) {
+        const { group, displayName } = splitActionNameByPrefix(action?.name);
+        if (!groupedMap.has(group)) groupedMap.set(group, []);
+        groupedMap.get(group).push({ action, displayName });
+      }
+      const groups = Array.from(groupedMap.entries());
+      // "未分组" 放最后，其余按字母排序（中英文都可用）。
+      groups.sort((a, b) => {
+        if (a[0] === '未分组' && b[0] !== '未分组') return 1;
+        if (b[0] === '未分组' && a[0] !== '未分组') return -1;
+        return String(a[0]).localeCompare(String(b[0]));
+      });
+      return groups;
+    }, [listForGroups]);
+
+    const MobileActionRow = ({ action, displayNameOverride }) => (
+      <div
         onClick={() => sendQuickAction(action, { closePanel: false })}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            sendQuickAction(action, { closePanel: false });
+          }
+        }}
+        role="button"
+        tabIndex={0}
         className={`w-full text-left ${t.card} border hover:border-amber-500/30 rounded-xl p-3 transition-all ${t.bgHover}`}
         title="点击发送"
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className={`font-bold text-sm ${t.text} truncate`} title={action?.name}>{action?.name}</div>
+            <div className={`font-bold text-sm ${t.text} truncate`} title={action?.name}>{displayNameOverride || action?.name}</div>
             <div className={`text-[11px] ${t.textMuted} truncate mt-1 font-mono`}>{action?.topic}</div>
             <div className={`text-[11px] ${t.textSecondary} truncate mt-1 font-mono`}>{String(action?.payload || '')}</div>
           </div>
@@ -2466,7 +2531,7 @@ export default function MqttDebugger() {
             </button>
           </div>
         </div>
-      </button>
+      </div>
     );
 
     return (
@@ -2477,16 +2542,7 @@ export default function MqttDebugger() {
               <div className={`text-sm font-bold ${t.text}`}>指令</div>
               <div className={`text-[11px] ${t.textMuted} truncate`}>手动发布 / 快捷指令</div>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setMobileConfigOpen(true)}
-                className={`p-2 rounded-xl border ${t.border} ${t.bgTertiary} ${t.bgHover} ${t.textSecondary}`}
-                title="连接配置"
-              >
-                <Settings className="w-4 h-4" />
-              </button>
-              <div className={`flex items-center ${t.bgTertiary} border ${t.border} rounded-xl p-1`}>
+            <div className={`flex items-center ${t.bgTertiary} border ${t.border} rounded-xl p-1`}>
                 <button
                   type="button"
                   onClick={() => setMobileCommandsView('manual')}
@@ -2509,13 +2565,43 @@ export default function MqttDebugger() {
                 >
                   快捷
                 </button>
-              </div>
             </div>
           </div>
         </header>
 
         {mobileCommandsView === 'manual' ? (
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+            {commonActions.length > 0 && (
+              <div className={`${t.card} border rounded-2xl p-4 space-y-3`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className={`text-sm font-bold ${t.text}`}>常用快捷指令</div>
+                  <button
+                    type="button"
+                    onClick={() => setMobileCommandsView('quick')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${t.border} ${t.bgTertiary} ${t.bgHover} ${t.textSecondary}`}
+                  >
+                    全部({quickActions.length})
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {commonActions.slice(0, 6).map((a) => {
+                    const { displayName } = splitActionNameByPrefix(a?.name);
+                    return (
+                      <button
+                        key={actionIdKey(a?.id) || a?.name}
+                        type="button"
+                        onClick={() => sendQuickAction(a, { closePanel: false })}
+                        className={`text-left ${t.card} border rounded-xl p-3 transition-all ${t.bgHover} hover:border-amber-500/30`}
+                        title="点击发送"
+                      >
+                        <div className={`text-sm font-bold ${t.text} truncate`}>{displayName || a?.name}</div>
+                        <div className={`text-[11px] ${t.textMuted} truncate mt-1 font-mono`}>{a?.topic}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div className={`${t.card} border rounded-2xl p-4 space-y-3`}>
               <div className={`text-xs font-semibold ${t.textMuted}`}>Topic</div>
               <input
@@ -2561,7 +2647,7 @@ export default function MqttDebugger() {
                 spellCheck={false}
                 autoCorrect="off"
                 autoCapitalize="off"
-                className={`w-full h-44 ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text} custom-scrollbar`}
+                className={`w-full h-36 ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text} custom-scrollbar`}
                 placeholder='{\"msg\":\"hello\"}'
               />
 
@@ -2610,26 +2696,91 @@ export default function MqttDebugger() {
               </button>
             </div>
 
-            {!q && pinned.length > 0 && (
+            {q ? (
               <div className="space-y-2">
-                <div className={`text-xs font-semibold ${t.textMuted} px-1`}>置顶</div>
+                <div className={`text-xs font-semibold ${t.textMuted} px-1`}>搜索结果（{filtered.length}）</div>
                 <div className="space-y-2">
-                  {pinned.map((a) => <MobileActionRow key={actionIdKey(a?.id) || a?.name} action={a} />)}
+                  {filtered.map((a) => <MobileActionRow key={actionIdKey(a?.id) || a?.name} action={a} />)}
                 </div>
+                {filtered.length === 0 && (
+                  <div className={`text-center py-10 border border-dashed ${t.border} rounded-xl text-sm ${t.textMuted}`}>
+                    没有匹配的快捷指令
+                  </div>
+                )}
               </div>
-            )}
+            ) : (
+              <>
+                {pinned.length > 0 && (
+                  <div className="space-y-2">
+                    <div className={`text-xs font-semibold ${t.textMuted} px-1`}>置顶</div>
+                    <div className="space-y-2">
+                      {pinned.map((a) => <MobileActionRow key={actionIdKey(a?.id) || a?.name} action={a} />)}
+                    </div>
+                  </div>
+                )}
 
-            <div className="space-y-2">
-              <div className={`text-xs font-semibold ${t.textMuted} px-1`}>{q ? `搜索结果（${filtered.length}）` : `全部（${filtered.length}）`}</div>
-              <div className="space-y-2">
-                {filtered.map((a) => <MobileActionRow key={actionIdKey(a?.id) || a?.name} action={a} />)}
-              </div>
-              {filtered.length === 0 && (
-                <div className={`text-center py-10 border border-dashed ${t.border} rounded-xl text-sm ${t.textMuted}`}>
-                  没有匹配的快捷指令
+                {recent.length > 0 && (
+                  <div className="space-y-2">
+                    <div className={`text-xs font-semibold ${t.textMuted} px-1`}>最近使用</div>
+                    <div className="space-y-2">
+                      {recent.map((a) => <MobileActionRow key={actionIdKey(a?.id) || a?.name} action={a} />)}
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <div className={`text-xs font-semibold ${t.textMuted} px-1`}>其它（{listForGroups.length}）</div>
+                  {grouped.length === 0 ? (
+                    <div className={`text-center py-10 border border-dashed ${t.border} rounded-xl text-sm ${t.textMuted}`}>
+                      还没有快捷指令
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {grouped.map(([group, rows]) => {
+                        const isCollapsed = !!quickActionGroupCollapsed?.[group];
+                        return (
+                          <div key={group} className={`${t.card} border rounded-xl p-3`}>
+                            <button
+                              type="button"
+                              onClick={() => setQuickActionGroupCollapsed((prev) => ({ ...(prev || {}), [group]: !prev?.[group] }))}
+                              className={`w-full flex items-center justify-between gap-3 ${t.bgHover} rounded-lg px-2 py-1.5 transition-colors`}
+                              title={isCollapsed ? '展开' : '收起'}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {isCollapsed ? (
+                                  <ChevronDown className={`w-4 h-4 ${t.textMuted}`} />
+                                ) : (
+                                  <ChevronUp className={`w-4 h-4 ${t.textMuted}`} />
+                                )}
+                                <div className={`text-sm font-bold ${t.text} truncate`}>{group}</div>
+                                <div className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5 shrink-0`}>
+                                  {rows.length}
+                                </div>
+                              </div>
+                              <div className={`text-[11px] ${t.textMuted} shrink-0`}>
+                                {isCollapsed ? '展开' : '收起'}
+                              </div>
+                            </button>
+
+                            {!isCollapsed && (
+                              <div className="space-y-2 mt-3">
+                                {rows.map(({ action, displayName }) => (
+                                  <MobileActionRow
+                                    key={actionIdKey(action?.id) || action?.name}
+                                    action={action}
+                                    displayNameOverride={displayName || action?.name}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -2721,8 +2872,6 @@ export default function MqttDebugger() {
         </div>
       )}
 
-      {mobileConfigOpen && <MobileConfigSheet />}
-
       {showQuickActionsPanel && (
         <div className="fixed inset-0 bg-black/50 z-[65] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
           <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-2xl w-full border ${t.border} p-6`}>
@@ -2768,28 +2917,6 @@ export default function MqttDebugger() {
               const recent = !q
                 ? recentActionIds.map((id) => all.find((a) => actionIdKey(a?.id) === actionIdKey(id))).filter(Boolean).slice(0, 10)
                 : [];
-
-              const splitNameByPrefix = (rawName) => {
-                const name = String(rawName || '').trim();
-                if (!name) return { group: '未分组', displayName: '' };
-
-                // 约定：用 “前缀/名称” 或 “前缀:名称” 来自动分组（便于卡片化管理）。
-                const candidates = ['/', '::', ':', '：'];
-                let best = null; // { idx, sep }
-                for (const sep of candidates) {
-                  const idx = name.indexOf(sep);
-                  if (idx <= 0 || idx >= name.length - sep.length) continue;
-                  if (!best || idx < best.idx || (idx === best.idx && sep.length > best.sep.length)) {
-                    best = { idx, sep };
-                  }
-                }
-
-                if (!best) return { group: '未分组', displayName: name };
-                const group = name.slice(0, best.idx).trim();
-                const displayName = name.slice(best.idx + best.sep.length).trim();
-                if (!group || !displayName) return { group: '未分组', displayName: name };
-                return { group, displayName };
-              };
 
               const ActionRow = ({ action, displayNameOverride }) => (
                 <div
@@ -2902,12 +3029,12 @@ export default function MqttDebugger() {
                   );
                 }
 
-                const groupedMap = new Map();
-                for (const action of items) {
-                  const { group, displayName } = splitNameByPrefix(action?.name);
+                 const groupedMap = new Map();
+                 for (const action of items) {
+                  const { group, displayName } = splitActionNameByPrefix(action?.name);
                   if (!groupedMap.has(group)) groupedMap.set(group, []);
                   groupedMap.get(group).push({ action, displayName });
-                }
+                 }
 
                 const groups = Array.from(groupedMap.entries());
 
@@ -4040,7 +4167,12 @@ export default function MqttDebugger() {
 
       <div className="flex md:hidden h-full w-full flex-col">
         <div className="flex-1 min-h-0 overflow-hidden">
-          {mobileNav === 'messages' ? <MobileMessagesView /> : <MobileCommandsView />}
+          {mobileNav === 'messages'
+            ? <MobileMessagesView />
+            : mobileNav === 'commands'
+              ? <MobileCommandsView />
+              : <MobileConfigView />
+          }
         </div>
         <MobileBottomNav />
       </div>
