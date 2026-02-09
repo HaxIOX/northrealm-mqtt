@@ -230,7 +230,12 @@ export default function MqttDebugger() {
     try {
       const raw = localStorage.getItem('mqtt_recent_actions');
       const parsed = JSON.parse(raw || '[]');
-      return Array.isArray(parsed) ? parsed : [];
+      // KISS: normalize action id to string to avoid number/string mismatch after backup/merge.
+      return Array.isArray(parsed)
+        ? parsed
+            .map((id) => (typeof id === 'string' || typeof id === 'number' ? String(id) : ''))
+            .filter(Boolean)
+        : [];
     } catch {
       return [];
     }
@@ -427,7 +432,7 @@ export default function MqttDebugger() {
       if (!hasConnect) return false;
 
       const source = window.__MQTT_PRO_MQTT_SOURCE__ || 'unknown';
-      const isNative = source === 'native';
+      const isNative = source === 'native' || source === 'native-mobile';
 
       console.log('[App] 检测到 window.mqtt');
       console.log('[App] MQTT来源:', source, isNative ? '(Node原生版，支持TCP)' : '(浏览器版，仅支持WebSocket)');
@@ -452,6 +457,32 @@ export default function MqttDebugger() {
 
     // 立即检查一次
     if (checkMqtt()) return () => { canceled = true; };
+
+    const isCapacitorNative =
+      typeof window !== 'undefined' &&
+      !!window.Capacitor &&
+      typeof window.Capacitor.isNativePlatform === 'function' &&
+      window.Capacitor.isNativePlatform() === true;
+
+    const loadNativeMobileMqtt = async () => {
+      try {
+        const mod = await import('./mqtt/nativeMobileMqtt.js');
+        if (canceled) return;
+        const mqttLib = mod?.createMobileMqttLib?.();
+        if (!mqttLib || typeof mqttLib.connect !== 'function') throw new Error('Mobile mqtt shim has no connect()');
+        applyMqttLib(mqttLib, 'native-mobile');
+      } catch (e) {
+        console.error('[App] Mobile native MQTT shim load failed:', e);
+        // Best-effort fallback so UI can still render (but mqtt:// won't work without native bridge).
+        loadBundledMqtt();
+      }
+    };
+
+    // Mobile native: load Capacitor bridge shim (supports mqtt:// and mqtts://).
+    if (isCapacitorNative) {
+      loadNativeMobileMqtt();
+      return () => { canceled = true; };
+    }
 
     // 桌面环境但 mqtt 还没加载：等待 preload 注入（若失败则降级为内置浏览器版，仅支持 ws/wss）
     if (isDesktopShell) {
@@ -1120,9 +1151,15 @@ export default function MqttDebugger() {
   };
 
   const recordRecentAction = (actionId) => {
-    const id = actionId;
+    const id = (typeof actionId === 'string' || typeof actionId === 'number') ? String(actionId) : '';
+    if (!id) return;
     setRecentActionIds((prev) => {
-      const next = [id, ...prev.filter((x) => x !== id)].slice(0, 20);
+      const prevIds = Array.isArray(prev)
+        ? prev
+            .map((x) => (typeof x === 'string' || typeof x === 'number' ? String(x) : ''))
+            .filter(Boolean)
+        : [];
+      const next = [id, ...prevIds.filter((x) => x !== id)].slice(0, 20);
       persistRecentActions(next);
       return next;
     });
@@ -1451,9 +1488,9 @@ export default function MqttDebugger() {
     // 检测 MQTT 库的类型
     if (window.mqtt) {
       const source = window.__MQTT_PRO_MQTT_SOURCE__ || 'unknown';
-      const isNative = source === 'native';
+      const isNative = source === 'native' || source === 'native-mobile';
 
-      addLog('system', '', `MQTT来源: ${source === 'native' ? 'Node原生(支持TCP)' : source === 'bundled' ? '内置浏览器版(仅WebSocket)' : source === 'cdn' ? 'CDN浏览器版(仅WebSocket)' : '未知'}`);
+      addLog('system', '', `MQTT来源: ${source === 'native' ? 'Node原生(支持TCP)' : source === 'native-mobile' ? '手机原生(支持TCP)' : source === 'bundled' ? '内置浏览器版(仅WebSocket)' : source === 'cdn' ? 'CDN浏览器版(仅WebSocket)' : '未知'}`);
       addLog('system', '', `MQTT版本: ${window.__MQTT_PRO_MQTT_VERSION__ || 'unknown'}`);
 
       if (!isNative && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
@@ -1949,6 +1986,9 @@ export default function MqttDebugger() {
   const logFilterLower = useMemo(() => String(logFilter || '').toLowerCase(), [logFilter]);
   const eventFilterLower = useMemo(() => String(eventFilter || '').toLowerCase(), [eventFilter]);
 
+  // KISS: action id comparisons should be stable even if ids are number/string across versions/backups.
+  const actionIdKey = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
+
   const { messageLogs, eventLogs } = useMemo(() => {
     const msg = [];
     const evt = [];
@@ -1977,29 +2017,41 @@ export default function MqttDebugger() {
   const pinnedActions = (() => {
     const pinned = (quickActions || []).filter((a) => a && a.pinned);
     if (pinned.length <= 1) return pinned;
-    const index = new Map((recentActionIds || []).map((id, i) => [id, i]));
+    const index = new Map((recentActionIds || []).map((id, i) => [actionIdKey(id), i]));
     return [...pinned].sort((a, b) => {
-      const ai = index.has(a.id) ? index.get(a.id) : Number.MAX_SAFE_INTEGER;
-      const bi = index.has(b.id) ? index.get(b.id) : Number.MAX_SAFE_INTEGER;
+      const ak = actionIdKey(a?.id);
+      const bk = actionIdKey(b?.id);
+      const ai = ak && index.has(ak) ? index.get(ak) : Number.MAX_SAFE_INTEGER;
+      const bi = bk && index.has(bk) ? index.get(bk) : Number.MAX_SAFE_INTEGER;
       if (ai !== bi) return ai - bi;
       return String(a?.name || '').localeCompare(String(b?.name || ''));
     });
   })();
   const commonActions = (() => {
     const all = Array.isArray(quickActions) ? quickActions : [];
-    const byId = new Map(all.map((a) => [a.id, a]));
+    const byId = new Map(all.map((a) => [actionIdKey(a?.id), a]).filter(([k]) => k));
     const chosen = [];
+    const chosenIds = new Set();
 
     for (const action of pinnedActions) {
-      if (action && chosen.length < maxCommonActions) chosen.push(action);
+      const k = actionIdKey(action?.id);
+      if (!k) continue;
+      if (chosenIds.has(k)) continue;
+      if (action && chosen.length < maxCommonActions) {
+        chosen.push(action);
+        chosenIds.add(k);
+      }
     }
 
     if (chosen.length < maxCommonActions) {
       for (const id of (recentActionIds || [])) {
-        const action = byId.get(id);
+        const k = actionIdKey(id);
+        if (!k) continue;
+        if (chosenIds.has(k)) continue;
+        const action = byId.get(k);
         if (!action) continue;
-        if (chosen.some((a) => a.id === action.id)) continue;
         chosen.push(action);
+        chosenIds.add(k);
         if (chosen.length >= maxCommonActions) break;
       }
     }
@@ -2165,7 +2217,7 @@ export default function MqttDebugger() {
               const filtered = q ? all.filter(match) : all;
               const pinned = !q ? all.filter((a) => a && a.pinned) : [];
               const recent = !q
-                ? recentActionIds.map((id) => all.find((a) => a.id === id)).filter(Boolean).slice(0, 10)
+                ? recentActionIds.map((id) => all.find((a) => actionIdKey(a?.id) === actionIdKey(id))).filter(Boolean).slice(0, 10)
                 : [];
 
               const splitNameByPrefix = (rawName) => {
@@ -2291,7 +2343,10 @@ export default function MqttDebugger() {
                       <div className={`text-xs font-semibold ${t.textMuted} px-1`}>{title}</div>
                       <div className="space-y-2">
                         {items.map((action) => (
-                          <ActionRow key={action.id} action={action} />
+                          <ActionRow
+                            key={actionIdKey(action?.id) || `${String(action?.name || '')}|${String(action?.topic || '')}|${String(action?.payload || '')}`}
+                            action={action}
+                          />
                         ))}
                       </div>
                     </div>
@@ -2341,7 +2396,7 @@ export default function MqttDebugger() {
                               <div className="space-y-2 mt-3">
                                 {rows.map(({ action, displayName }) => (
                                   <ActionRow
-                                    key={action.id}
+                                    key={actionIdKey(action?.id) || `${String(action?.name || '')}|${String(action?.topic || '')}|${String(action?.payload || '')}`}
                                     action={action}
                                     displayNameOverride={displayName || action.name}
                                   />
@@ -3267,7 +3322,7 @@ export default function MqttDebugger() {
               <div className="flex items-center gap-2 min-w-0">
                 {commonActions.map((action) => (
                   <button
-                    key={action.id}
+                    key={actionIdKey(action?.id) || `${String(action?.name || '')}|${String(action?.topic || '')}`}
                     type="button"
                     onClick={() => sendQuickAction(action, { closePanel: false })}
                     className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${

@@ -12,12 +12,19 @@
     "desktop:dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"npm:dev\" \"node scripts/electron-dev.cjs\"",
     "desktop:build": "npm run build && node scripts/desktop-build-prep.cjs && set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/&& electron-builder --win --publish never",
     "desktop:build:kill": "npm run build && node scripts/desktop-build-prep.cjs --kill && set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/&& electron-builder --win --publish never",
-    "desktop:portable": "npm run desktop:build && node scripts/portable-zip.cjs"
+    "desktop:portable": "npm run desktop:build && node scripts/portable-zip.cjs",
+    "android:add": "npx cap add android",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:open": "npx cap open android"
   },
   "dependencies": {
+    "@capacitor/core": "^8.0.2",
+    "astral-regex": "^2.0.0",
     "mqtt": "^5.14.1"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.0.2",
+    "@capacitor/cli": "^8.0.2",
     "@eslint/js": "^9.39.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
@@ -36,6 +43,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3",
     "vite": "^7.2.4"
   },
   "description": "Northrealm (NR) — MQTT debugger / MQTT client (Web + Windows Desktop).",
