@@ -1410,8 +1410,9 @@ export default function MqttDebugger() {
 
   const handleConnect = () => {
     if (!sdkReady) return addLog('error', '', 'SDK 未加载');
-    if (!isDesktopShell && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
-      return addLog('error', '', '浏览器不支持 mqtt://（1883）直连，请使用 ws/wss 或使用桌面版');
+    // KISS: mqtt/mqtts 需要原生 TCP 能力（Electron preload 或 Capacitor 原生插件）；纯浏览器只能 ws/wss。
+    if (!getDesktopTcpCapable() && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
+      return addLog('error', '', '当前环境不支持 mqtt:// 直连，请使用 ws/wss（WebSocket），或使用桌面/手机 App');
     }
 
     const host = String(connection.host || '').trim();
@@ -2182,6 +2183,14 @@ export default function MqttDebugger() {
             ? `重连中（${reconnectCount}）`
             : '未连接';
 
+    const mobileRecentErrors = useMemo(() => (
+      (filteredMessageLogs || []).filter((l) => l && l.type === 'error').slice(-3).reverse()
+    ), [filteredMessageLogs]);
+
+    const mobileRecentEvents = useMemo(() => (
+      (filteredEventLogs || []).slice(-3).reverse()
+    ), [filteredEventLogs]);
+
     return (
       <div className="flex-1 min-h-0 flex flex-col">
         <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 py-3`}>
@@ -2213,6 +2222,20 @@ export default function MqttDebugger() {
             <div className={`text-[11px] ${t.textMuted}`}>
               协议版本：MQTT 3.1.1（v4）· 认证：用户名/密码
             </div>
+            {(mobileRecentErrors.length > 0 || mobileRecentEvents.length > 0) && (
+              <div className="space-y-2">
+                {mobileRecentErrors.map((l) => (
+                  <div key={l.id} className={`text-[11px] p-2 rounded-xl border ${theme === 'light' ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-rose-500/10 border-rose-500/30 text-rose-200'}`}>
+                    {String(l.payload || '错误')}
+                  </div>
+                ))}
+                {mobileRecentEvents.map((l) => (
+                  <div key={l.id} className={`text-[11px] p-2 rounded-xl border ${t.border} ${t.bgTertiary} ${t.textSecondary}`}>
+                    {String(l.payload || '')}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className={`${t.card} border rounded-2xl p-4 space-y-3`}>
