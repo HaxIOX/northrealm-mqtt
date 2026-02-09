@@ -1410,6 +1410,15 @@ export default function MqttDebugger() {
 
   const handleConnect = () => {
     if (!sdkReady) return addLog('error', '', 'SDK 未加载');
+    if (
+      runtime?.isCapacitorNative &&
+      (connection.protocol === 'mqtt' || connection.protocol === 'mqtts') &&
+      typeof window !== 'undefined' &&
+      typeof window.Capacitor?.isPluginAvailable === 'function' &&
+      window.Capacitor.isPluginAvailable('NativeMqtt') !== true
+    ) {
+      return addLog('error', '', 'NativeMqtt 插件未就绪：请安装最新 APK 或重新执行 cap sync/build');
+    }
     // KISS: mqtt/mqtts 需要原生 TCP 能力（Electron preload 或 Capacitor 原生插件）；纯浏览器只能 ws/wss。
     if (!getDesktopTcpCapable() && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
       return addLog('error', '', '当前环境不支持 mqtt:// 直连，请使用 ws/wss（WebSocket），或使用桌面/手机 App');

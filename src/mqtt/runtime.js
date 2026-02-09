@@ -35,9 +35,12 @@ export function isDesktopTcpCapable() {
   const desktopTcpCapable = isDesktopShell && hasPreload && sourceNow === 'native' && hasConnect;
 
   // Mobile: Capacitor native plugin bridge (supports mqtt:// and mqtts://).
-  // We treat Capacitor native runtime as TCP-capable even before JS bridge is injected,
-  // so the UI can default to mqtt/mqtts on mobile (bridge load happens during app boot).
-  const mobileTcpCapable = isCapacitorNative;
+  // Prefer checking plugin availability when possible, so we don't mis-detect broken APKs.
+  const mobilePluginOk =
+    typeof window.Capacitor?.isPluginAvailable === 'function'
+      ? window.Capacitor.isPluginAvailable('NativeMqtt')
+      : true;
+  const mobileTcpCapable = isCapacitorNative && mobilePluginOk;
 
   return desktopTcpCapable || mobileTcpCapable;
 }
