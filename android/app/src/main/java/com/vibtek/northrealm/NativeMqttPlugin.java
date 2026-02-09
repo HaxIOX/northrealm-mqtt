@@ -96,6 +96,8 @@ public class NativeMqttPlugin extends Plugin {
     opts.setCleanSession(clean);
     opts.setKeepAliveInterval(Math.max(0, keepalive));
     opts.setConnectionTimeout(Math.max(1, connectTimeoutMs / 1000));
+    // Enforce MQTT 3.1.1 (v4) to match UI setting and avoid broker-side version mismatch.
+    opts.setMqttVersion(MqttConnectOptions.MQTT_VERSION_3_1_1);
     opts.setAutomaticReconnect(reconnectPeriodMs > 0);
     if (username != null && !username.isEmpty()) opts.setUserName(username);
     if (password != null && !password.isEmpty()) opts.setPassword(password.toCharArray());

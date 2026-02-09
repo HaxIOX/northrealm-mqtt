@@ -325,8 +325,12 @@ export default function MqttDebugger() {
 
   // 主题状态
   const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem('mqtt_theme');
-    return saved || 'dark';
+    try {
+      const saved = localStorage.getItem('mqtt_theme');
+      return saved || 'light';
+    } catch {
+      return 'light';
+    }
   });
 
   // 主题切换
@@ -1377,6 +1381,25 @@ export default function MqttDebugger() {
     let diagnosis = '';
 
     // 根据错误代码进行诊断
+    if (typeof errorCode === 'number') {
+      // Paho MqttException reason codes often overlap with CONNACK return codes.
+      // 1: unacceptable protocol version, 2: identifier rejected, 3: server unavailable,
+      // 4: bad username or password, 5: not authorized.
+      if (errorCode === 1) {
+        diagnosis = '💡 诊断: 协议版本不被接受\n   - Broker 不支持当前 MQTT 版本（应使用 3.1.1 / v4）';
+      } else if (errorCode === 2) {
+        diagnosis = '💡 诊断: ClientID 被拒绝\n   - ClientID 不合法/过长/冲突\n   - 尝试点击“随机 ClientID”或清空让系统生成';
+      } else if (errorCode === 3) {
+        diagnosis = '💡 诊断: 服务器不可用\n   - Broker 忙/不可达\n   - 检查网络、端口、防火墙';
+      } else if (errorCode === 4) {
+        diagnosis = '💡 诊断: 用户名或密码错误\n   - 请确认用户名/密码（密码为空也可能被拒绝）';
+      } else if (errorCode === 5) {
+        diagnosis = '💡 诊断: 无权连接（Not authorized）\n   - 账号无权限或 ACL 拒绝\n   - Broker 需要认证但凭据不正确';
+      }
+    }
+
+    if (diagnosis) return diagnosis;
+
     if (errorCode === 'ECONNREFUSED') {
       diagnosis = '💡 诊断: 连接被拒绝\n   - 服务器可能未运行\n   - 端口号可能错误\n   - 防火墙可能阻止了连接';
     } else if (errorCode === 'ETIMEDOUT' || errorCode === 'ESOCKETTIMEDOUT') {
@@ -1544,6 +1567,15 @@ export default function MqttDebugger() {
         setConnection((prev) => ({ ...prev, clientId }));
         addLog('system', '', `⚠️ ClientID 为空，已自动生成: ${clientId}`);
       }
+      // Reduce collision risk: if user is still using an auto-generated prefix, rotate per connect attempt.
+      if (clientId.startsWith('mqtt_debugger_') || clientId.startsWith('mqtt_client_') || clientId.startsWith('nr_')) {
+        const rotated = `mqtt_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 8)}`;
+        if (rotated !== clientId) {
+          clientId = rotated;
+          setConnection((prev) => ({ ...prev, clientId }));
+          addLog('system', '', `💡 已自动更新 ClientID（降低冲突概率）: ${clientId}`);
+        }
+      }
 
       let keepalive = Number(advancedConfig.keepalive);
       if (!Number.isFinite(keepalive) || keepalive < 0) {
@@ -1563,7 +1595,7 @@ export default function MqttDebugger() {
         password: connection.password,
         clean: advancedConfig.clean,
         keepalive,
-        connectTimeout: 10000,      // 增加到10秒
+        connectTimeout: runtime?.isCapacitorNative ? 8000 : 10000,
         reconnectPeriod: autoReconnect ? 3000 : 0,
         // 我们自己管理重订阅（autoResubscribe + 本地 subscriptions 列表），避免 mqtt.js 内置重订阅导致重复 SUBSCRIBE
         // 在 broker 侧可能触发 retained 消息重复下发，从而表现为“收一条显示两条”。
@@ -2146,35 +2178,38 @@ export default function MqttDebugger() {
         <button
           type="button"
           onClick={() => setMobileNav('messages')}
-          className={`py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${
+          className={`py-2.5 text-[11px] font-bold flex flex-col items-center justify-center gap-1 transition-colors ${
             mobileNav === 'messages'
               ? (theme === 'light' ? 'text-indigo-700 bg-indigo-50' : 'text-indigo-300 bg-indigo-500/10')
               : `${t.textMuted} ${t.bgHover}`
           }`}
         >
-          <MessageSquare className="w-4 h-4" /> 消息
+          <MessageSquare className="w-5 h-5" />
+          <span className="leading-none">消息</span>
         </button>
         <button
           type="button"
           onClick={() => setMobileNav('commands')}
-          className={`py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${
+          className={`py-2.5 text-[11px] font-bold flex flex-col items-center justify-center gap-1 transition-colors ${
             mobileNav === 'commands'
               ? (theme === 'light' ? 'text-amber-700 bg-amber-50' : 'text-amber-300 bg-amber-500/10')
               : `${t.textMuted} ${t.bgHover}`
           }`}
         >
-          <Send className="w-4 h-4" /> 指令
+          <Send className="w-5 h-5" />
+          <span className="leading-none">指令</span>
         </button>
         <button
           type="button"
           onClick={() => setMobileNav('config')}
-          className={`py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${
+          className={`py-2.5 text-[11px] font-bold flex flex-col items-center justify-center gap-1 transition-colors ${
             mobileNav === 'config'
               ? (theme === 'light' ? 'text-slate-800 bg-slate-50' : 'text-slate-100 bg-slate-500/10')
               : `${t.textMuted} ${t.bgHover}`
           }`}
         >
-          <Settings className="w-4 h-4" /> 配置
+          <Settings className="w-5 h-5" />
+          <span className="leading-none">配置</span>
         </button>
       </div>
     </nav>
@@ -2214,7 +2249,7 @@ export default function MqttDebugger() {
 
     return (
       <div className="flex-1 min-h-0 flex flex-col">
-        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 py-3`}>
+        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className={`text-sm font-bold ${t.text}`}>配置</div>
@@ -2309,11 +2344,25 @@ export default function MqttDebugger() {
 
             <div className="space-y-1">
               <div className={`text-xs font-semibold ${t.textMuted}`}>Client ID</div>
-              <input
-                value={connection.clientId}
-                onChange={(e) => setConnection((prev) => ({ ...prev, clientId: e.target.value }))}
-                className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-3 py-2 text-sm font-mono outline-none ${t.text}`}
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  value={connection.clientId}
+                  onChange={(e) => setConnection((prev) => ({ ...prev, clientId: e.target.value }))}
+                  className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2 text-sm font-mono outline-none ${t.text}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = `mqtt_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 8)}`;
+                    setConnection((prev) => ({ ...prev, clientId: next }));
+                    addLog('system', '', `🔁 已生成新的 ClientID: ${next}`);
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border ${t.border} ${t.bgTertiary} ${t.bgHover} ${t.textSecondary}`}
+                  title="生成随机 ClientID"
+                >
+                  随机
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -2366,7 +2415,7 @@ export default function MqttDebugger() {
     const receivedLogs = filteredMessageLogs.filter((l) => l && l.type === 'received');
     return (
       <div className="flex-1 min-h-0 flex flex-col">
-        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 py-3`}>
+        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className={`text-sm font-bold ${t.text}`}>订阅消息</div>
@@ -2580,7 +2629,7 @@ export default function MqttDebugger() {
 
     return (
       <div className="flex-1 min-h-0 flex flex-col">
-        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 py-3`}>
+        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className={`text-sm font-bold ${t.text}`}>指令</div>
