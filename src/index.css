@@ -1,3 +1,11 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  /* Safe-area insets (iOS notch / gesture area). On most Android WebViews these are 0. */
+  --nr-safe-top: env(safe-area-inset-top, 0px);
+  --nr-safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Base header padding (kept small; safe-area is added on top when present). */
+  --nr-header-pt: 0.5rem;
+}

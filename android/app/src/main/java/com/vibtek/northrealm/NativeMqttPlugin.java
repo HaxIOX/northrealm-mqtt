@@ -1,5 +1,11 @@
 package com.vibtek.northrealm;
 
+import android.content.ContentValues;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
+
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -16,6 +22,7 @@ import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
@@ -375,6 +382,62 @@ public class NativeMqttPlugin extends Plugin {
       JSObject ev = new JSObject();
       notifyListeners("close", ev);
       call.resolve();
+    }
+  }
+
+  /**
+   * Save a small text file into the public Downloads folder so users can find exported backups/logs.
+   * Uses MediaStore (Android Q+) and works without legacy storage permissions on modern Android.
+   */
+  @PluginMethod
+  public void saveTextToDownloads(PluginCall call) {
+    String filename = call.getString("filename");
+    String text = call.getString("text", "");
+    String mime = call.getString("mime", "application/json");
+
+    if (filename == null || filename.trim().isEmpty()) {
+      call.reject("filename is required");
+      return;
+    }
+
+    byte[] bytes = (text != null ? text : "").getBytes(StandardCharsets.UTF_8);
+
+    try {
+      ContentValues values = new ContentValues();
+      values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
+      values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+      }
+
+      Uri collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+      Uri item = getContext().getContentResolver().insert(collection, values);
+      if (item == null) {
+        call.reject("failed to create download entry");
+        return;
+      }
+
+      try (OutputStream os = getContext().getContentResolver().openOutputStream(item)) {
+        if (os == null) {
+          call.reject("open output stream failed");
+          return;
+        }
+        os.write(bytes);
+        os.flush();
+      }
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        ContentValues done = new ContentValues();
+        done.put(MediaStore.MediaColumns.IS_PENDING, 0);
+        getContext().getContentResolver().update(item, done, null, null);
+      }
+
+      JSObject res = new JSObject();
+      res.put("uri", item.toString());
+      call.resolve(res);
+    } catch (Exception e) {
+      call.reject("save failed: " + e.getMessage());
     }
   }
 }

@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { detectRuntime, isDesktopTcpCapable } from './mqtt/runtime.js';
 import { encryptJson, decryptJson } from './mqtt/e2ee.js';
+import SubscriptionSheet from './mobile/SubscriptionSheet.jsx';
+import useKeyboardInsetPx from './hooks/useKeyboardInsetPx.js';
 
 const PUBLISH_PANEL_HEIGHT_PX = 220;
 
@@ -80,6 +82,7 @@ export default function MqttDebugger() {
   const runtime = detectRuntime();
   const isElectronRuntime = runtime.isElectronUserAgent;
   const isDesktopShell = runtime.isDesktopShell;
+  const keyboardInsetPx = useKeyboardInsetPx(true);
 
   const getDesktopTcpCapable = () => isDesktopTcpCapable();
 
@@ -717,8 +720,27 @@ export default function MqttDebugger() {
 
   const backupImportInputRef = useRef(null);
 
-  const downloadJsonFile = (data, filename) => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+  const downloadJsonFile = async (data, filename) => {
+    const text = JSON.stringify(data, null, 2);
+
+    // Capacitor Android: save into Downloads via native plugin so users can actually find the file.
+    if (runtime?.isCapacitorNative) {
+      try {
+        const NativeMqtt = registerPlugin('NativeMqtt');
+        await NativeMqtt.saveTextToDownloads({
+          filename,
+          text,
+          mime: 'application/json',
+        });
+        addLog('system', '', `已保存到手机下载目录(Downloads)：${filename}`);
+        return;
+      } catch (e) {
+        // Fall back to browser-style download (may be ignored by some WebViews).
+        addLog('error', '', `保存到下载目录失败，将尝试使用浏览器下载：${String(e?.message || e)}`);
+      }
+    }
+
+    const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -749,7 +771,7 @@ export default function MqttDebugger() {
     }));
 
     return {
-      schema: 'mqtt-pro-message-logs',
+      schema: 'northrealm-message-logs',
       v: 1,
       scope,
       exportedAt: new Date().toISOString(),
@@ -770,7 +792,7 @@ export default function MqttDebugger() {
     }));
 
     return {
-      schema: 'mqtt-pro-backup',
+      schema: 'northrealm-backup',
       v: 1,
       exportedAt: new Date().toISOString(),
       appVersion: (typeof window !== 'undefined' && window.__MQTT_PRO_APP_VERSION__) ? window.__MQTT_PRO_APP_VERSION__ : 'unknown',
@@ -800,15 +822,15 @@ export default function MqttDebugger() {
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, [logExportMenuOpen]);
 
-  const exportMessageLogs = (scope) => {
+  const exportMessageLogs = async (scope) => {
     try {
       const exportLogs = scope === 'all' ? messageLogs : filteredMessageLogs;
       const payload = buildMessageLogsExportPayload(scope, exportLogs);
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       const filename = scope === 'all'
-        ? `mqtt-pro-message-logs-all-${ts}.json`
-        : `mqtt-pro-message-logs-filtered-${ts}.json`;
-      downloadJsonFile(payload, filename);
+        ? `northrealm-message-logs-all-${ts}.json`
+        : `northrealm-message-logs-filtered-${ts}.json`;
+      await downloadJsonFile(payload, filename);
       addLog('system', '', `已导出消息日志（${scope === 'all' ? '全部' : '筛选后'}，${payload.count} 条）`);
     } catch (e) {
       addLog('error', '', `导出失败: ${String(e?.message || e)}`);
@@ -817,11 +839,11 @@ export default function MqttDebugger() {
     }
   };
 
-  const handleExportBackup = (includePasswords = false) => {
+  const handleExportBackup = async (includePasswords = false) => {
     try {
       const payload = buildBackupPayload(includePasswords);
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      downloadJsonFile(payload, `mqtt-pro-backup-${ts}.json`);
+      await downloadJsonFile(payload, `northrealm-backup-${ts}.json`);
       addLog('system', '', includePasswords ? '已导出配置备份（包含密码）' : '已导出配置备份（不包含密码）');
     } catch (e) {
       addLog('error', '', `导出失败: ${String(e?.message || e)}`);
@@ -838,14 +860,14 @@ export default function MqttDebugger() {
 
   const parseBackup = (raw) => {
     if (!raw || typeof raw !== 'object') return null;
-    if (raw.schema === 'mqtt-pro-backup' && raw.v === 1 && raw.data && typeof raw.data === 'object') return raw.data;
-    if (raw.configs || raw.actions || raw.subscriptions || raw.multicastTargets) {
-      return {
-        configs: raw.configs,
-        actions: raw.actions,
-        subscriptions: raw.subscriptions,
-        multicastTargets: raw.multicastTargets,
-      };
+    // Accept current & legacy schema names. Be strict otherwise to avoid importing unrelated JSON formats.
+    if (
+      (raw.schema === 'northrealm-backup' || raw.schema === 'mqtt-pro-backup') &&
+      raw.v === 1 &&
+      raw.data &&
+      typeof raw.data === 'object'
+    ) {
+      return raw.data;
     }
     return null;
   };
@@ -1434,7 +1456,28 @@ export default function MqttDebugger() {
 
     return diagnosis;
   };
-  useEffect(() => { if (isAutoScroll) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs, isAutoScroll]);
+
+  // Mobile/Android: when a text input is focused (soft keyboard open), programmatic scrolling can cause focus loss
+  // and the keyboard to collapse. Skip auto-scroll in that case. (KISS: heuristic based on activeElement.)
+  const isTextInputFocused = () => {
+    try {
+      if (typeof document === 'undefined') return false;
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = String(el.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+      return !!el.isContentEditable;
+    } catch {
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    if (!isAutoScroll) return;
+    if (mobileSubEditorOpen) return;
+    if (isTextInputFocused()) return;
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs, isAutoScroll, mobileSubEditorOpen]);
   useEffect(() => {
     let i; if (connectStatus === 'connected') i = setInterval(() => setConnectDuration(p => p + 1), 1000);
     else setConnectDuration(0); return () => clearInterval(i);
@@ -2173,7 +2216,7 @@ export default function MqttDebugger() {
 
   // --- Mobile views (KISS): bottom navigation + two screens (messages / commands) ---
   const MobileBottomNav = () => (
-    <nav className={`shrink-0 border-t ${t.border} ${t.bgSecondary} backdrop-blur-xl pb-[env(safe-area-inset-bottom)]`}>
+    <nav className={`shrink-0 border-t ${t.border} ${t.bgSecondary} backdrop-blur-xl pb-[var(--nr-safe-bottom)]`}>
       <div className="grid grid-cols-3">
         <button
           type="button"
@@ -2249,11 +2292,11 @@ export default function MqttDebugger() {
 
     return (
       <div className="flex-1 min-h-0 flex flex-col">
-        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3`}>
+        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(var(--nr-header-pt)+var(--nr-safe-top))] pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className={`text-sm font-bold ${t.text}`}>配置</div>
-              <div className={`text-[11px] ${t.textMuted} truncate`}>{statusText}</div>
+              <div className={`text-[11px] ${t.textMuted} break-all`}>{statusText}</div>
             </div>
             <button
               type="button"
@@ -2266,15 +2309,8 @@ export default function MqttDebugger() {
           </div>
         </header>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-[calc(10rem+var(--nr-safe-bottom))] space-y-3 custom-scrollbar">
           <div className={`${t.card} border rounded-2xl p-4 space-y-3`}>
-            <button
-              type="button"
-              onClick={connectStatus === 'connected' || connectStatus === 'connecting' || reconnectCount > 0 ? handleDisconnect : handleConnect}
-              className={`w-full px-4 py-3 rounded-xl text-sm font-bold transition-all shadow-lg ${connectBtnVariant}`}
-            >
-              {connectBtnText}
-            </button>
             <div className={`text-[11px] ${t.textMuted}`}>
               协议版本：MQTT 3.1.1（v4）· 认证：用户名/密码
             </div>
@@ -2371,6 +2407,10 @@ export default function MqttDebugger() {
                 <input
                   value={connection.username}
                   onChange={(e) => setConnection((prev) => ({ ...prev, username: e.target.value }))}
+                  autoComplete="username"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-3 py-2 text-sm outline-none ${t.text}`}
                 />
               </div>
@@ -2380,6 +2420,10 @@ export default function MqttDebugger() {
                   type="password"
                   value={connection.password}
                   onChange={(e) => setConnection((prev) => ({ ...prev, password: e.target.value }))}
+                  autoComplete="current-password"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-3 py-2 text-sm outline-none ${t.text}`}
                 />
               </div>
@@ -2406,6 +2450,17 @@ export default function MqttDebugger() {
               <span>同步与备份</span>
             </button>
           </div>
+
+          {/* Mobile: put connect button at bottom for easier reach (and keep it visible while scrolling). */}
+          <div className={`sticky bottom-0 z-10 -mx-4 px-4 pt-3 pb-[calc(1rem+var(--nr-safe-bottom))] ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-t ${t.border}`}>
+            <button
+              type="button"
+              onClick={connectStatus === 'connected' || connectStatus === 'connecting' || reconnectCount > 0 ? handleDisconnect : handleConnect}
+              className={`w-full px-4 py-3 rounded-xl text-sm font-bold transition-all shadow-lg ${connectBtnVariant}`}
+            >
+              {connectBtnText}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -2415,7 +2470,7 @@ export default function MqttDebugger() {
     const receivedLogs = filteredMessageLogs.filter((l) => l && l.type === 'received');
     return (
       <div className="flex-1 min-h-0 flex flex-col">
-        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3`}>
+        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(var(--nr-header-pt)+var(--nr-safe-top))] pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className={`text-sm font-bold ${t.text}`}>订阅消息</div>
@@ -2426,9 +2481,9 @@ export default function MqttDebugger() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setMobileSubEditorOpen((v) => !v)}
+                onClick={() => setMobileSubEditorOpen(true)}
                 className={`p-2 rounded-xl border ${t.border} ${t.bgTertiary} ${t.bgHover} ${t.textSecondary}`}
-                title="订阅主题"
+                title="订阅主题 / 筛选"
               >
                 <Plus className="w-4 h-4" />
               </button>
@@ -2443,6 +2498,9 @@ export default function MqttDebugger() {
                 value={logFilter}
                 onChange={e => setLogFilter(e.target.value)}
                 placeholder="筛选 Topic / Payload..."
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
                 className={`w-full pl-9 pr-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all ${t.text} placeholder:${t.textMuted}`}
               />
             </div>
@@ -2457,27 +2515,6 @@ export default function MqttDebugger() {
               </button>
             )}
           </div>
-
-          {mobileSubEditorOpen && (
-            <div className="mt-3 flex items-center gap-2">
-              <input
-                type="text"
-                placeholder="Topic (e.g. #)"
-                value={subTopic}
-                onChange={(e) => setSubTopic(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSubscribe()}
-                className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all ${t.text}`}
-              />
-              <button
-                type="button"
-                onClick={handleSubscribe}
-                disabled={!client?.connected}
-                className={`${theme === 'light' ? 'bg-emerald-100 hover:bg-emerald-600 text-emerald-600 hover:text-white' : 'bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white'} px-4 py-2 rounded-xl text-sm font-bold disabled:opacity-50 transition-all`}
-              >
-                订阅
-              </button>
-            </div>
-          )}
 
           {/* Topic chips */}
           {subscriptions.length > 0 && (
@@ -2506,7 +2543,7 @@ export default function MqttDebugger() {
           )}
         </header>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-[calc(5.5rem+var(--nr-safe-bottom))] space-y-3 custom-scrollbar">
           {receivedLogs.length === 0 ? (
             <div className={`flex flex-col items-center justify-center h-full ${t.textMuted}`}>
               <MessageSquare className="w-12 h-12 mb-3 opacity-30" />
@@ -2552,6 +2589,23 @@ export default function MqttDebugger() {
           )}
           <div ref={logsEndRef} />
         </div>
+
+        <SubscriptionSheet
+          open={mobileSubEditorOpen}
+          onClose={() => setMobileSubEditorOpen(false)}
+          isNative={!!runtime?.isCapacitorNative}
+          t={t}
+          theme={theme}
+          connected={!!client?.connected}
+          subTopic={subTopic}
+          setSubTopic={setSubTopic}
+          onSubscribe={handleSubscribe}
+          subscriptions={subscriptions}
+          logTopicFilters={logTopicFilters}
+          toggleLogTopicFilter={toggleLogTopicFilter}
+          clearLogTopicFilters={clearLogTopicFilters}
+          onUnsubscribe={handleUnsubscribe}
+        />
       </div>
     );
   };
@@ -2629,7 +2683,7 @@ export default function MqttDebugger() {
 
     return (
       <div className="flex-1 min-h-0 flex flex-col">
-        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3`}>
+        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(var(--nr-header-pt)+var(--nr-safe-top))] pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className={`text-sm font-bold ${t.text}`}>指令</div>
@@ -2881,7 +2935,7 @@ export default function MqttDebugger() {
   };
 
   return (
-    <div className={`h-screen w-full ${t.bg} ${t.text} font-sans overflow-hidden selection:bg-indigo-500/30 transition-colors duration-300`}>
+    <div className={`h-[100dvh] w-full ${t.bg} ${t.text} font-sans overflow-hidden selection:bg-indigo-500/30 transition-colors duration-300`}>
 
       {/* 模态框 */}
       {modal.open && (
@@ -3413,7 +3467,10 @@ export default function MqttDebugger() {
       {/* 云同步弹窗 */}
       {showSyncModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-md">
-          <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-md w-full border ${t.border} p-6`}>
+          <div
+            className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-md w-full border ${t.border} p-6 max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar`}
+            style={keyboardInsetPx > 0 ? { marginBottom: `${keyboardInsetPx}px` } : undefined}
+          >
             <div className="flex justify-between items-center mb-4">
               <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}><Settings className="w-5 h-5 text-indigo-500"/> 同步与备份</h3>
               <button onClick={() => setShowSyncModal(false)} className={`${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded-lg transition-colors`}><X className="w-5 h-5"/></button>
@@ -3681,8 +3738,8 @@ export default function MqttDebugger() {
                 )}
 
                 <div className="grid grid-cols-2 gap-2">
-                  <input type="text" value={connection.username} onChange={(e) => setConnection({...connection, username: e.target.value})} disabled={connectStatus === 'connected'} placeholder="用户名" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
-                  <input type="password" value={connection.password} onChange={(e) => setConnection({...connection, password: e.target.value})} disabled={connectStatus === 'connected'} placeholder="密码" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
+                  <input type="text" value={connection.username} onChange={(e) => setConnection((prev) => ({ ...prev, username: e.target.value }))} autoComplete="username" autoCorrect="off" autoCapitalize="off" spellCheck={false} disabled={connectStatus === 'connected'} placeholder="用户名" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
+                  <input type="password" value={connection.password} onChange={(e) => setConnection((prev) => ({ ...prev, password: e.target.value }))} autoComplete="current-password" autoCorrect="off" autoCapitalize="off" spellCheck={false} disabled={connectStatus === 'connected'} placeholder="密码" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
                 </div>
 
                 <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-400 font-medium">
