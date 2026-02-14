@@ -18,7 +18,6 @@ class MobileMqttClient {
     this._handlers = new Map(); // event -> Set<fn>
     this._listenerHandles = [];
     this.connected = false;
-    this._closed = false;
   }
 
   on(event, cb) {
@@ -48,7 +47,7 @@ class MobileMqttClient {
       // mqtt.js style connack object fields used by App: sessionPresent/returnCode (best-effort).
       const connack = { sessionPresent: !!ev?.sessionPresent, returnCode: 0, reconnect: !!ev?.reconnect };
       this._emit('connect', connack);
-      if (ev?.reconnect) this._emit('reconnect');
+      // Native side already emits a dedicated "reconnect" event; avoid double-emitting.
     });
 
     await add('reconnect', () => {
@@ -79,6 +78,7 @@ class MobileMqttClient {
       const payloadStr = ev?.payload != null ? String(ev.payload) : '';
       // Keep compatibility with existing code: it calls m.toString().
       const m = { toString: () => payloadStr };
+      if (ev?.payloadBase64) m.payloadBase64 = String(ev.payloadBase64);
       const packet = {
         qos: Number.isFinite(ev?.qos) ? Number(ev.qos) : 0,
         retain: !!ev?.retain,
@@ -89,6 +89,9 @@ class MobileMqttClient {
   }
 
   async connect() {
+    // Clean up any leftover listeners from a previous connection to prevent duplicate events.
+    await this._cleanupListeners();
+
     await this._attachNativeListeners();
 
     const o = this._opts || {};
@@ -121,9 +124,10 @@ class MobileMqttClient {
     return this;
   }
 
-  subscribe(topic, cb) {
+  subscribe(topic, opts, cb) {
+    if (typeof opts === 'function') { cb = opts; opts = {}; }
     const t = String(topic || '').trim();
-    const qos = 0;
+    const qos = Number.isFinite(opts?.qos) ? Number(opts.qos) : 0;
     NativeMqtt.subscribe({ topic: t, qos })
       .then(() => { if (typeof cb === 'function') cb(null); })
       .catch((e) => { if (typeof cb === 'function') cb(toError(e)); });
@@ -167,8 +171,6 @@ class MobileMqttClient {
   }
 
   async _cleanupListeners() {
-    if (this._closed) return;
-    this._closed = true;
     for (const h of this._listenerHandles) {
       try { await h.remove(); } catch { /* ignore */ }
     }

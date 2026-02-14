@@ -14,9 +14,11 @@ import {
   Bell, LayoutDashboard, Sun, Moon, Star, Maximize2
 } from 'lucide-react';
 import { detectRuntime, isDesktopTcpCapable } from './mqtt/runtime.js';
+import { registerPlugin } from '@capacitor/core';
 import { encryptJson, decryptJson } from './mqtt/e2ee.js';
 import SubscriptionSheet from './mobile/SubscriptionSheet.jsx';
 import useKeyboardInsetPx from './hooks/useKeyboardInsetPx.js';
+import useAndroidImeFocusGuard from './hooks/useAndroidImeFocusGuard.js';
 
 const PUBLISH_PANEL_HEIGHT_PX = 220;
 
@@ -82,7 +84,10 @@ export default function MqttDebugger() {
   const runtime = detectRuntime();
   const isElectronRuntime = runtime.isElectronUserAgent;
   const isDesktopShell = runtime.isDesktopShell;
-  const keyboardInsetPx = useKeyboardInsetPx(true);
+  // Android native WebView already handles IME via windowSoftInputMode (adjustResize/adjustPan).
+  // Avoid extra VisualViewport-driven rerenders during IME animation (can trigger focus glitches).
+  const keyboardInsetPx = useKeyboardInsetPx(!runtime?.isCapacitorNative);
+  useAndroidImeFocusGuard(!!runtime?.isCapacitorNative);
 
   const getDesktopTcpCapable = () => isDesktopTcpCapable();
 
@@ -727,16 +732,20 @@ export default function MqttDebugger() {
     if (runtime?.isCapacitorNative) {
       try {
         const NativeMqtt = registerPlugin('NativeMqtt');
-        await NativeMqtt.saveTextToDownloads({
+        const result = await NativeMqtt.saveTextToDownloads({
           filename,
           text,
           mime: 'application/json',
         });
-        addLog('system', '', `已保存到手机下载目录(Downloads)：${filename}`);
+        const uri = result?.uri || '(unknown)';
+        addLog('system', '', `已保存到手机下载目录(Downloads)：${filename} → ${uri}`);
+        alert(`已保存到 Downloads 文件夹：\n${filename}\n\nURI: ${uri}`);
         return;
       } catch (e) {
-        // Fall back to browser-style download (may be ignored by some WebViews).
-        addLog('error', '', `保存到下载目录失败，将尝试使用浏览器下载：${String(e?.message || e)}`);
+        const errMsg = String(e?.message || e);
+        addLog('error', '', `保存到下载目录失败：${errMsg}`);
+        alert(`导出失败：${errMsg}`);
+        return;
       }
     }
 
@@ -925,7 +934,14 @@ export default function MqttDebugger() {
       if (!data) throw new Error('文件格式不正确（不是 Northrealm 备份）');
 
       openConfirmModal('确认导入备份？（同名配置会覆盖，本地数据会合并）', () => {
-        if (Array.isArray(data.configs)) updateData('configs', mergeConfigsByName(savedConfigs, data.configs));
+        if (Array.isArray(data.configs)) {
+          const merged = mergeConfigsByName(savedConfigs, data.configs);
+          updateData('configs', merged);
+          // 自动将导入的第一个配置填入连接表单
+          if (data.configs.length > 0) {
+            setConnection((prev) => ({ ...data.configs[0], clientId: prev.clientId }));
+          }
+        }
         if (Array.isArray(data.actions)) updateData('actions', mergeActionsById(quickActions, data.actions));
         if (Array.isArray(data.subscriptions)) updateData('subscriptions', mergeSubscriptionsUnique(subscriptions, data.subscriptions));
         if (Array.isArray(data.multicastTargets)) updateData('multicastTargets', mergeMulticastTargetsByTopic(multicastTargets, data.multicastTargets));
@@ -1220,6 +1236,30 @@ export default function MqttDebugger() {
       const newActions = quickActions.filter(t => t.id !== id);
       updateData('actions', newActions);
     }, { confirmText: '确定删除', confirmVariant: 'danger' });
+  };
+
+  const handleSetActionGroup = (action, e) => {
+    if (e) e.stopPropagation();
+    openInputModal("设置分组（留空则自动分组）", action.group || '', (groupName) => {
+      const trimmed = (groupName || '').trim();
+      const newActions = quickActions.map((a) =>
+        a.id === action.id ? { ...a, group: trimmed || undefined } : a
+      );
+      updateData('actions', newActions);
+    });
+  };
+
+  const handleSetGroupForAll = (currentGroup, actions, e) => {
+    if (e) e.stopPropagation();
+    openInputModal("重命名分组", currentGroup === '未分组' ? '' : currentGroup, (newGroup) => {
+      const trimmed = (newGroup || '').trim();
+      if (!trimmed || trimmed === currentGroup) return;
+      const ids = new Set(actions.map((r) => r.action?.id));
+      const newActions = quickActions.map((a) =>
+        ids.has(a.id) ? { ...a, group: trimmed } : a
+      );
+      updateData('actions', newActions);
+    });
   };
 
   const handleRenameAction = (action, e) => {
@@ -2092,13 +2132,17 @@ export default function MqttDebugger() {
   // KISS: action id comparisons should be stable even if ids are number/string across versions/backups.
   const actionIdKey = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
 
-  // 约定：用 “前缀/名称” 或 “前缀:名称” 来自动分组（便于快捷指令卡片化管理）。
-  const splitActionNameByPrefix = (rawName) => {
-    const name = String(rawName || '').trim();
-    if (!name) return { group: '未分组', displayName: '' };
+  // 约定：用 "前缀/名称" 或 "前缀:名称" 来自动分组（便于快捷指令卡片化管理）。
+  // 优先级：action.group（手动） > 名称前缀 > Topic前缀 > "未分组"
+  const getActionGroup = (action) => {
+    // 1. 手动分组优先
+    if (action?.group) return { group: action.group, displayName: action?.name || '' };
 
+    const name = String(action?.name || '').trim();
+
+    // 2. 名称前缀分组
     const candidates = ['/', '::', ':', '：'];
-    let best = null; // { idx, sep }
+    let best = null;
     for (const sep of candidates) {
       const idx = name.indexOf(sep);
       if (idx <= 0 || idx >= name.length - sep.length) continue;
@@ -2106,12 +2150,23 @@ export default function MqttDebugger() {
         best = { idx, sep };
       }
     }
+    if (best) {
+      const group = name.slice(0, best.idx).trim();
+      const displayName = name.slice(best.idx + best.sep.length).trim();
+      if (group && displayName) return { group, displayName };
+    }
 
-    if (!best) return { group: '未分组', displayName: name };
-    const group = name.slice(0, best.idx).trim();
-    const displayName = name.slice(best.idx + best.sep.length).trim();
-    if (!group || !displayName) return { group: '未分组', displayName: name };
-    return { group, displayName };
+    // 3. 从 Topic 自动提取分组（去掉最后一段作为命令名，其余作为分组）
+    const topic = String(action?.topic || '').trim();
+    if (topic) {
+      const parts = topic.split('/');
+      if (parts.length >= 2) {
+        const group = parts.slice(0, -1).join('/');
+        return { group, displayName: name || parts[parts.length - 1] };
+      }
+    }
+
+    return { group: '未分组', displayName: name || '' };
   };
 
   const { messageLogs, eventLogs } = useMemo(() => {
@@ -2215,7 +2270,11 @@ export default function MqttDebugger() {
   };
 
   // --- Mobile views (KISS): bottom navigation + two screens (messages / commands) ---
-  const MobileBottomNav = () => (
+  // IMPORTANT: don't render inline-defined components like <MobileConfigView /> on Android WebView.
+  // IME open triggers viewport resize -> state update -> rerender; inline component types change
+  // each render, causing unmount/remount and input blur (keyboard flashes open then closes).
+  // Use render helpers to keep DOM nodes stable.
+  const renderMobileBottomNav = () => (
     <nav className={`shrink-0 border-t ${t.border} ${t.bgSecondary} backdrop-blur-xl pb-[var(--nr-safe-bottom)]`}>
       <div className="grid grid-cols-3">
         <button
@@ -2258,7 +2317,7 @@ export default function MqttDebugger() {
     </nav>
   );
 
-  const MobileConfigView = () => {
+  const renderMobileConfigView = () => {
     const connectBtnVariant =
       connectStatus === 'connected'
         ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20'
@@ -2282,16 +2341,11 @@ export default function MqttDebugger() {
             ? `重连中（${reconnectCount}）`
             : '未连接';
 
-    const mobileRecentErrors = useMemo(() => (
-      (filteredMessageLogs || []).filter((l) => l && l.type === 'error').slice(-3).reverse()
-    ), [filteredMessageLogs]);
-
-    const mobileRecentEvents = useMemo(() => (
-      (filteredEventLogs || []).slice(-3).reverse()
-    ), [filteredEventLogs]);
+    const mobileRecentErrors = (filteredMessageLogs || []).filter((l) => l && l.type === 'error').slice(-3).reverse();
+    const mobileRecentEvents = (filteredEventLogs || []).slice(-3).reverse();
 
     return (
-      <div className="flex-1 min-h-0 flex flex-col">
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
         <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(var(--nr-header-pt)+var(--nr-safe-top))] pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -2309,7 +2363,7 @@ export default function MqttDebugger() {
           </div>
         </header>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-[calc(10rem+var(--nr-safe-bottom))] space-y-3 custom-scrollbar">
+        <div className="px-4 pt-4 pb-[calc(10rem+var(--nr-safe-bottom))] space-y-3">
           <div className={`${t.card} border rounded-2xl p-4 space-y-3`}>
             <div className={`text-[11px] ${t.textMuted}`}>
               协议版本：MQTT 3.1.1（v4）· 认证：用户名/密码
@@ -2466,10 +2520,10 @@ export default function MqttDebugger() {
     );
   };
 
-  const MobileMessagesView = () => {
+  const renderMobileMessagesView = () => {
     const receivedLogs = filteredMessageLogs.filter((l) => l && l.type === 'received');
     return (
-      <div className="flex-1 min-h-0 flex flex-col">
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
         <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(var(--nr-header-pt)+var(--nr-safe-top))] pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -2543,9 +2597,9 @@ export default function MqttDebugger() {
           )}
         </header>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-[calc(5.5rem+var(--nr-safe-bottom))] space-y-3 custom-scrollbar">
+        <div className="px-4 pt-4 pb-[calc(5.5rem+var(--nr-safe-bottom))] space-y-3">
           {receivedLogs.length === 0 ? (
-            <div className={`flex flex-col items-center justify-center h-full ${t.textMuted}`}>
+            <div className={`flex flex-col items-center justify-center min-h-[55vh] ${t.textMuted}`}>
               <MessageSquare className="w-12 h-12 mb-3 opacity-30" />
               <p className="text-sm">暂无订阅消息</p>
               <p className="text-xs mt-1">连接并订阅 Topic 后，收到的消息会显示在这里</p>
@@ -2610,7 +2664,7 @@ export default function MqttDebugger() {
     );
   };
 
-  const MobileCommandsView = () => {
+  const renderMobileCommandsView = () => {
     const q = (mobileQuickQuery || '').trim().toLowerCase();
     const all = Array.isArray(quickActions) ? quickActions : [];
     const match = (a) => `${a?.name || ''} ${a?.topic || ''} ${a?.payload || ''}`.toLowerCase().includes(q);
@@ -2620,20 +2674,20 @@ export default function MqttDebugger() {
       ? (recentActionIds || []).map((id) => all.find((a) => actionIdKey(a?.id) === actionIdKey(id))).filter(Boolean).slice(0, 10)
       : [];
 
-    const excludedIds = useMemo(() => {
+    const excludedIds = (() => {
       if (q) return new Set();
       const s = new Set();
       for (const a of pinned) s.add(actionIdKey(a?.id));
       for (const a of recent) s.add(actionIdKey(a?.id));
       return s;
-    }, [q, pinned, recent]);
+    })();
 
     const listForGroups = q ? filtered : all.filter((a) => !excludedIds.has(actionIdKey(a?.id)));
 
-    const grouped = useMemo(() => {
+    const grouped = (() => {
       const groupedMap = new Map();
       for (const action of (listForGroups || [])) {
-        const { group, displayName } = splitActionNameByPrefix(action?.name);
+        const { group, displayName } = getActionGroup(action);
         if (!groupedMap.has(group)) groupedMap.set(group, []);
         groupedMap.get(group).push({ action, displayName });
       }
@@ -2645,9 +2699,9 @@ export default function MqttDebugger() {
         return String(a[0]).localeCompare(String(b[0]));
       });
       return groups;
-    }, [listForGroups]);
+    })();
 
-    const MobileActionRow = ({ action, displayNameOverride }) => (
+    const renderMobileActionRow = (action, displayNameOverride) => (
       <div
         onClick={() => sendQuickAction(action, { closePanel: false })}
         onKeyDown={(e) => {
@@ -2667,7 +2721,15 @@ export default function MqttDebugger() {
             <div className={`text-[11px] ${t.textMuted} truncate mt-1 font-mono`}>{action?.topic}</div>
             <div className={`text-[11px] ${t.textSecondary} truncate mt-1 font-mono`}>{String(action?.payload || '')}</div>
           </div>
-          <div className="shrink-0 flex items-center gap-2">
+          <div className="shrink-0 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => handleSetActionGroup(action, e)}
+              className={`p-1.5 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+              title="设置分组"
+            >
+              <Layout className={`w-4 h-4 ${action?.group ? (theme === 'light' ? 'text-indigo-600' : 'text-indigo-300') : t.textMuted}`} />
+            </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); toggleActionPinned(action.id); }}
@@ -2682,7 +2744,7 @@ export default function MqttDebugger() {
     );
 
     return (
-      <div className="flex-1 min-h-0 flex flex-col">
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
         <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(var(--nr-header-pt)+var(--nr-safe-top))] pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -2717,7 +2779,7 @@ export default function MqttDebugger() {
         </header>
 
         {mobileCommandsView === 'manual' ? (
-          <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+          <div className="p-4 space-y-3">
             {commonActions.length > 0 && (
               <div className={`${t.card} border rounded-2xl p-4 space-y-3`}>
                 <div className="flex items-center justify-between gap-3">
@@ -2732,7 +2794,7 @@ export default function MqttDebugger() {
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   {commonActions.slice(0, 6).map((a) => {
-                    const { displayName } = splitActionNameByPrefix(a?.name);
+                    const { displayName } = getActionGroup(a);
                     return (
                       <button
                         key={actionIdKey(a?.id) || a?.name}
@@ -2825,7 +2887,7 @@ export default function MqttDebugger() {
             </div>
           </div>
         ) : (
-          <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+          <div className="p-4 space-y-3">
             <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2`}>
               <Search className={`w-4 h-4 ${t.textMuted}`} />
               <input
@@ -2843,91 +2905,86 @@ export default function MqttDebugger() {
               </button>
             </div>
 
-            {q ? (
-              <div className="space-y-2">
-                <div className={`text-xs font-semibold ${t.textMuted} px-1`}>搜索结果（{filtered.length}）</div>
-                <div className="space-y-2">
-                  {filtered.map((a) => <MobileActionRow key={actionIdKey(a?.id) || a?.name} action={a} />)}
-                </div>
-                {filtered.length === 0 && (
+            {(() => {
+              // 统一按前缀分组（搜索时也按组显示）
+              const source = q ? filtered : all;
+              const allGrouped = (() => {
+                const gMap = new Map();
+                for (const action of source) {
+                  const { group, displayName } = getActionGroup(action);
+                  if (!gMap.has(group)) gMap.set(group, []);
+                  gMap.get(group).push({ action, displayName });
+                }
+                const groups = Array.from(gMap.entries());
+                groups.sort((a, b) => {
+                  if (a[0] === '未分组' && b[0] !== '未分组') return 1;
+                  if (b[0] === '未分组' && a[0] !== '未分组') return -1;
+                  return String(a[0]).localeCompare(String(b[0]));
+                });
+                return groups;
+              })();
+
+              if (source.length === 0) {
+                return (
                   <div className={`text-center py-10 border border-dashed ${t.border} rounded-xl text-sm ${t.textMuted}`}>
-                    没有匹配的快捷指令
+                    {q ? '没有匹配的快捷指令' : '还没有快捷指令'}
                   </div>
-                )}
-              </div>
-            ) : (
-              <>
-                {pinned.length > 0 && (
-                  <div className="space-y-2">
-                    <div className={`text-xs font-semibold ${t.textMuted} px-1`}>置顶</div>
-                    <div className="space-y-2">
-                      {pinned.map((a) => <MobileActionRow key={actionIdKey(a?.id) || a?.name} action={a} />)}
-                    </div>
-                  </div>
-                )}
+                );
+              }
 
-                {recent.length > 0 && (
-                  <div className="space-y-2">
-                    <div className={`text-xs font-semibold ${t.textMuted} px-1`}>最近使用</div>
-                    <div className="space-y-2">
-                      {recent.map((a) => <MobileActionRow key={actionIdKey(a?.id) || a?.name} action={a} />)}
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <div className={`text-xs font-semibold ${t.textMuted} px-1`}>其它（{listForGroups.length}）</div>
-                  {grouped.length === 0 ? (
-                    <div className={`text-center py-10 border border-dashed ${t.border} rounded-xl text-sm ${t.textMuted}`}>
-                      还没有快捷指令
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {grouped.map(([group, rows]) => {
-                        const isCollapsed = !!quickActionGroupCollapsed?.[group];
-                        return (
-                          <div key={group} className={`${t.card} border rounded-xl p-3`}>
-                            <button
-                              type="button"
-                              onClick={() => setQuickActionGroupCollapsed((prev) => ({ ...(prev || {}), [group]: !prev?.[group] }))}
-                              className={`w-full flex items-center justify-between gap-3 ${t.bgHover} rounded-lg px-2 py-1.5 transition-colors`}
-                              title={isCollapsed ? '展开' : '收起'}
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                {isCollapsed ? (
-                                  <ChevronDown className={`w-4 h-4 ${t.textMuted}`} />
-                                ) : (
-                                  <ChevronUp className={`w-4 h-4 ${t.textMuted}`} />
-                                )}
-                                <div className={`text-sm font-bold ${t.text} truncate`}>{group}</div>
-                                <div className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5 shrink-0`}>
-                                  {rows.length}
-                                </div>
-                              </div>
-                              <div className={`text-[11px] ${t.textMuted} shrink-0`}>
-                                {isCollapsed ? '展开' : '收起'}
-                              </div>
-                            </button>
-
-                            {!isCollapsed && (
-                              <div className="space-y-2 mt-3">
-                                {rows.map(({ action, displayName }) => (
-                                  <MobileActionRow
-                                    key={actionIdKey(action?.id) || action?.name}
-                                    action={action}
-                                    displayNameOverride={displayName || action?.name}
-                                  />
-                                ))}
-                              </div>
+              return (
+                <div className="space-y-3">
+                  {q && <div className={`text-xs font-semibold ${t.textMuted} px-1`}>搜索结果（{filtered.length}）</div>}
+                  {allGrouped.map(([group, rows]) => {
+                    const isCollapsed = !!quickActionGroupCollapsed?.[group];
+                    const pinnedCount = rows.filter((r) => r.action?.pinned).length;
+                    return (
+                      <div key={group} className={`${t.card} border rounded-xl p-3`}>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setQuickActionGroupCollapsed((prev) => ({ ...(prev || {}), [group]: !prev?.[group] }))}
+                            className={`flex-1 flex items-center gap-2 min-w-0 ${t.bgHover} rounded-lg px-2 py-1.5 transition-colors`}
+                            title={isCollapsed ? '展开' : '收起'}
+                          >
+                            {isCollapsed ? (
+                              <ChevronDown className={`w-4 h-4 shrink-0 ${t.textMuted}`} />
+                            ) : (
+                              <ChevronUp className={`w-4 h-4 shrink-0 ${t.textMuted}`} />
                             )}
+                            <div className={`text-sm font-bold ${t.text} truncate`}>{group}</div>
+                            <div className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5 shrink-0`}>
+                              {rows.length}
+                            </div>
+                            {pinnedCount > 0 && (
+                              <Star className={`w-3 h-3 shrink-0 ${theme === 'light' ? 'text-amber-600' : 'text-amber-300'}`} fill="currentColor" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleSetGroupForAll(group, rows, e)}
+                            className={`p-1.5 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors shrink-0`}
+                            title="重命名分组"
+                          >
+                            <Edit2 className={`w-3.5 h-3.5 ${t.textMuted}`} />
+                          </button>
+                        </div>
+
+                        {!isCollapsed && (
+                          <div className="space-y-2 mt-3">
+                            {rows.map(({ action, displayName }) => (
+                              <React.Fragment key={actionIdKey(action?.id) || action?.name}>
+                                {renderMobileActionRow(action, displayName || action?.name)}
+                              </React.Fragment>
+                            ))}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              </>
-            )}
+              );
+            })()}
           </div>
         )}
       </div>
@@ -2935,7 +2992,7 @@ export default function MqttDebugger() {
   };
 
   return (
-    <div className={`h-[100dvh] w-full ${t.bg} ${t.text} font-sans overflow-hidden selection:bg-indigo-500/30 transition-colors duration-300`}>
+    <div className={`h-screen h-[100dvh] w-full ${t.bg} ${t.text} font-sans overflow-hidden selection:bg-indigo-500/30 transition-colors duration-300`}>
 
       {/* 模态框 */}
       {modal.open && (
@@ -3178,7 +3235,7 @@ export default function MqttDebugger() {
 
                  const groupedMap = new Map();
                  for (const action of items) {
-                  const { group, displayName } = splitActionNameByPrefix(action?.name);
+                  const { group, displayName } = getActionGroup(action);
                   if (!groupedMap.has(group)) groupedMap.set(group, []);
                   groupedMap.get(group).push({ action, displayName });
                  }
@@ -3468,7 +3525,7 @@ export default function MqttDebugger() {
       {showSyncModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div
-            className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-md w-full border ${t.border} p-6 max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar`}
+            className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-md w-full border ${t.border} p-6 max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar`}
             style={keyboardInsetPx > 0 ? { marginBottom: `${keyboardInsetPx}px` } : undefined}
           >
             <div className="flex justify-between items-center mb-4">
@@ -3663,7 +3720,7 @@ export default function MqttDebugger() {
         </div>
 
         {/* 连接配置 */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar px-4">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-4">
 
           {/* 配置折叠面板 */}
           <div className="mb-3">
@@ -4007,7 +4064,7 @@ export default function MqttDebugger() {
           </div>
 
           {/* 日志列表 */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
+          <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-3 custom-scrollbar">
             {filteredMessageLogs.length === 0 ? (
               <div className={`flex flex-col items-center justify-center h-full ${t.textMuted}`}>
                 <MessageSquare className="w-12 h-12 mb-3 opacity-30" />
@@ -4270,7 +4327,7 @@ export default function MqttDebugger() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2 custom-scrollbar">
                 {filteredEventLogs.length === 0 ? (
                   <div className={`flex flex-col items-center justify-center h-full ${t.textMuted}`}>
                     <Bell className="w-10 h-10 mb-3 opacity-30" />
@@ -4316,19 +4373,17 @@ export default function MqttDebugger() {
       </div>
 
       <div className="flex md:hidden h-full w-full flex-col">
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {mobileNav === 'messages'
-            ? <MobileMessagesView />
-            : mobileNav === 'commands'
-              ? <MobileCommandsView />
-              : <MobileConfigView />
-          }
-        </div>
-        <MobileBottomNav />
+        {mobileNav === 'messages'
+          ? renderMobileMessagesView()
+          : mobileNav === 'commands'
+            ? renderMobileCommandsView()
+            : renderMobileConfigView()
+        }
+        {renderMobileBottomNav()}
       </div>
 
       <style>{`
-        .custom-scrollbar { scrollbar-width: thin; scrollbar-color: ${theme === 'light' ? '#cbd5e1' : '#334155'} transparent; scrollbar-gutter: stable; }
+        .custom-scrollbar { scrollbar-width: thin; scrollbar-color: ${theme === 'light' ? '#cbd5e1' : '#334155'} transparent; scrollbar-gutter: stable; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: ${theme === 'light' ? '#cbd5e1' : '#334155'}; border-radius: 3px; }

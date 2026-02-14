@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { X, Trash2 } from 'lucide-react';
 import useKeyboardInsetPx from '../hooks/useKeyboardInsetPx.js';
 
@@ -21,7 +21,42 @@ export default function SubscriptionSheet({
   clearLogTopicFilters,
   onUnsubscribe,
 }) {
-  const keyboardInsetPx = useKeyboardInsetPx(!!open);
+  // Native Android WebView handles IME via windowSoftInputMode; avoid extra VisualViewport rerenders that can cause blur.
+  const keyboardInsetPx = useKeyboardInsetPx(!!open && !isNative);
+  const lastResizeTs = useRef(0);
+
+  // Mobile/Android: programmatic close (backdrop tap) during soft keyboard animation
+  // can steal focus and collapse the keyboard. We gate backdrop-close with:
+  // - recent viewport resize (keyboard open/close)
+  // - soft keyboard visible (best-effort via VisualViewport inset)
+  // - focused text input (heuristic)
+  const isTextInputFocused = () => {
+    try {
+      if (typeof document === 'undefined') return false;
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = String(el.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+      return !!el.isContentEditable;
+    } catch {
+      return false;
+    }
+  };
+
+  // Track viewport resizes (keyboard open/close) to prevent spurious backdrop close.
+  // On Android WebView with adjustResize, the viewport change can cause phantom
+  // pointer events on the backdrop during keyboard animation.
+  useEffect(() => {
+    if (!open) return;
+    const onResize = () => { lastResizeTs.current = Date.now(); };
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    if (vv) vv.addEventListener('resize', onResize);
+    window.addEventListener('resize', onResize);
+    return () => {
+      if (vv) vv.removeEventListener('resize', onResize);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -42,13 +77,18 @@ export default function SubscriptionSheet({
   return (
     <div
       className="fixed inset-0 z-[70] bg-black/40 backdrop-blur-sm flex items-end justify-center"
-      onPointerDown={(e) => {
-        if (e.target === e.currentTarget) onClose?.();
+      onClick={(e) => {
+        if (e.target !== e.currentTarget) return;
+        // If keyboard is visible or a text input is focused, avoid backdrop close to prevent blur.
+        if (keyboardInsetPx > 0 || isTextInputFocused()) return;
+        // Resize events can lag behind keyboard animation; keep this window slightly conservative.
+        if (Date.now() - lastResizeTs.current <= 800) return;
+        onClose?.();
       }}
       role="presentation"
     >
       <div
-        className={`w-full max-w-md ${t.bgSecondary} border ${t.border} rounded-t-3xl p-4 pb-[calc(1rem+var(--nr-safe-bottom))] max-h-[85dvh] overflow-y-auto custom-scrollbar`}
+        className={`w-full max-w-md ${t.bgSecondary} border ${t.border} rounded-t-3xl p-4 pb-[calc(1rem+var(--nr-safe-bottom))] max-h-[85vh] max-h-[85dvh] overflow-y-auto custom-scrollbar`}
         onPointerDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="订阅主题"
@@ -73,6 +113,7 @@ export default function SubscriptionSheet({
             value={subTopic}
             onChange={(e) => setSubTopic?.(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && onSubscribe?.()}
+            onFocus={() => { lastResizeTs.current = Date.now(); }}
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck={false}
@@ -105,7 +146,7 @@ export default function SubscriptionSheet({
           )}
         </div>
 
-        <div className="mt-2 max-h-[50dvh] overflow-y-auto custom-scrollbar space-y-2">
+        <div className="mt-2 max-h-[50vh] max-h-[50dvh] overflow-y-auto custom-scrollbar space-y-2">
           {(subscriptions || []).length === 0 ? (
             <div className={`text-xs ${t.textMuted} text-center py-6 border border-dashed ${t.border} rounded-xl`}>
               暂无订阅主题

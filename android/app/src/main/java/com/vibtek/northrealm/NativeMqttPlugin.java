@@ -1,16 +1,22 @@
 package com.vibtek.northrealm;
 
+import android.Manifest;
 import android.content.ContentValues;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 
 import org.eclipse.paho.client.mqttv3.IMqttActionListener;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
@@ -22,11 +28,21 @@ import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
-@CapacitorPlugin(name = "NativeMqtt")
+import android.util.Base64;
+
+@CapacitorPlugin(
+  name = "NativeMqtt",
+  permissions = {
+    // Only used on API < 29 for legacy Downloads write.
+    @Permission(strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE }, alias = "storage")
+  }
+)
 public class NativeMqttPlugin extends Plugin {
 
   private final Object lock = new Object();
@@ -136,8 +152,8 @@ public class NativeMqttPlugin extends Plugin {
         }
 
         if (manual) {
-          JSObject ev = new JSObject();
-          notifyListeners("close", ev);
+          // Manual disconnect/replace: end() already emits "close".
+          // Also avoid emitting "close" for stale clients during a reconnect/replace sequence.
           return;
         }
 
@@ -151,13 +167,15 @@ public class NativeMqttPlugin extends Plugin {
       public void messageArrived(String topic, MqttMessage message) {
         JSObject ev = new JSObject();
         ev.put("topic", topic != null ? topic : "");
-        String payload = "";
-        try {
-          payload = new String(message.getPayload(), StandardCharsets.UTF_8);
-        } catch (Exception ignored) {
-          // ignore
-        }
+        byte[] raw = message != null ? message.getPayload() : null;
+        if (raw == null) raw = new byte[0];
+        String payload = new String(raw, StandardCharsets.UTF_8);
         ev.put("payload", payload);
+        // Only include Base64 when payload looks non-UTF8 or empty but has raw bytes,
+        // to keep events small and reduce per-message CPU overhead.
+        if ((payload.isEmpty() && raw.length > 0) || payload.indexOf('\uFFFD') >= 0) {
+          ev.put("payloadBase64", Base64.encodeToString(raw, Base64.NO_WRAP));
+        }
         ev.put("qos", message.getQos());
         ev.put("retain", message.isRetained());
         ev.put("dup", message.isDuplicate());
@@ -210,12 +228,17 @@ public class NativeMqttPlugin extends Plugin {
   @PluginMethod
   public void subscribe(PluginCall call) {
     String topic = call.getString("topic");
+    if (topic == null || topic.trim().isEmpty()) {
+      call.reject("topic is required");
+      return;
+    }
     int qos = call.getInt("qos", 0);
+    qos = Math.max(0, Math.min(2, qos));
     MqttAsyncClient c;
     synchronized (lock) {
       c = client;
     }
-    if (c == null) {
+    if (c == null || !c.isConnected()) {
       call.reject("not connected");
       return;
     }
@@ -240,11 +263,15 @@ public class NativeMqttPlugin extends Plugin {
   @PluginMethod
   public void unsubscribe(PluginCall call) {
     String topic = call.getString("topic");
+    if (topic == null || topic.trim().isEmpty()) {
+      call.reject("topic is required");
+      return;
+    }
     MqttAsyncClient c;
     synchronized (lock) {
       c = client;
     }
-    if (c == null) {
+    if (c == null || !c.isConnected()) {
       call.reject("not connected");
       return;
     }
@@ -269,15 +296,20 @@ public class NativeMqttPlugin extends Plugin {
   @PluginMethod
   public void publish(PluginCall call) {
     String topic = call.getString("topic");
+    if (topic == null || topic.trim().isEmpty()) {
+      call.reject("topic is required");
+      return;
+    }
     String payload = call.getString("payload", "");
     int qos = call.getInt("qos", 0);
+    qos = Math.max(0, Math.min(2, qos));
     boolean retain = Boolean.TRUE.equals(call.getBoolean("retain", false));
 
     MqttAsyncClient c;
     synchronized (lock) {
       c = client;
     }
-    if (c == null) {
+    if (c == null || !c.isConnected()) {
       call.reject("not connected");
       return;
     }
@@ -403,41 +435,68 @@ public class NativeMqttPlugin extends Plugin {
     byte[] bytes = (text != null ? text : "").getBytes(StandardCharsets.UTF_8);
 
     try {
-      ContentValues values = new ContentValues();
-      values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
-      values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        // Android Q+: use MediaStore API (no permissions needed).
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
         values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
         values.put(MediaStore.MediaColumns.IS_PENDING, 1);
-      }
 
-      Uri collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
-      Uri item = getContext().getContentResolver().insert(collection, values);
-      if (item == null) {
-        call.reject("failed to create download entry");
-        return;
-      }
-
-      try (OutputStream os = getContext().getContentResolver().openOutputStream(item)) {
-        if (os == null) {
-          call.reject("open output stream failed");
+        Uri collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+        Uri item = getContext().getContentResolver().insert(collection, values);
+        if (item == null) {
+          call.reject("failed to create download entry");
           return;
         }
-        os.write(bytes);
-        os.flush();
-      }
 
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        try (OutputStream os = getContext().getContentResolver().openOutputStream(item)) {
+          if (os == null) {
+            call.reject("open output stream failed");
+            return;
+          }
+          os.write(bytes);
+          os.flush();
+        }
+
         ContentValues done = new ContentValues();
         done.put(MediaStore.MediaColumns.IS_PENDING, 0);
         getContext().getContentResolver().update(item, done, null, null);
-      }
 
-      JSObject res = new JSObject();
-      res.put("uri", item.toString());
-      call.resolve(res);
+        JSObject res = new JSObject();
+        res.put("uri", item.toString());
+        call.resolve(res);
+      } else {
+        // API 24-28: requires legacy storage permission on Android 6-9.
+        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+          requestPermissionForAlias("storage", call, "saveTextToDownloadsPermsCallback");
+          return;
+        }
+        // API 24-28: write directly to the public Downloads directory.
+        @SuppressWarnings("deprecation")
+        File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (!dir.exists()) dir.mkdirs();
+        File file = new File(dir, filename);
+        try (FileOutputStream fos = new FileOutputStream(file)) {
+          fos.write(bytes);
+          fos.flush();
+        }
+
+        JSObject res = new JSObject();
+        res.put("uri", Uri.fromFile(file).toString());
+        call.resolve(res);
+      }
     } catch (Exception e) {
       call.reject("save failed: " + e.getMessage());
     }
+  }
+
+  @PermissionCallback
+  private void saveTextToDownloadsPermsCallback(PluginCall call) {
+    if (getPermissionState("storage") != PermissionState.GRANTED) {
+      call.reject("storage permission denied");
+      return;
+    }
+    saveTextToDownloads(call);
   }
 }
