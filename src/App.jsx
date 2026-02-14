@@ -192,6 +192,12 @@ export default function MqttDebugger() {
   const [mobileCommandsView, setMobileCommandsView] = useState('manual'); // 'manual' | 'quick'
   const [mobileSubEditorOpen, setMobileSubEditorOpen] = useState(false);
   const [mobileQuickQuery, setMobileQuickQuery] = useState('');
+  const [expandedTopicIds, setExpandedTopicIds] = useState(new Set());
+  const topicSegmentOptions = [2, 3, 4, 0]; // 0 = 全部
+  const [topicSegments, setTopicSegments] = useState(() => {
+    try { const v = Number(localStorage.getItem('mqtt_topic_segments')); return topicSegmentOptions.includes(v) ? v : 3; } catch { return 3; }
+  });
+  useEffect(() => { try { localStorage.setItem('mqtt_topic_segments', String(topicSegments)); } catch { /* ignore */ } }, [topicSegments]);
   const [quickActionGroupCollapsed, setQuickActionGroupCollapsed] = useState(() => {
     try {
       const raw = localStorage.getItem('mqtt_quick_action_group_collapsed');
@@ -272,6 +278,7 @@ export default function MqttDebugger() {
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [logViewMode, setLogViewMode] = useState('text');
   const logsEndRef = useRef(null);
+  const mobileLogsTopRef = useRef(null);
   const logIdRef = useRef(0);
 
   // 调试：数据包日志（packetsend/packetreceive 会非常频繁，默认关闭）
@@ -327,6 +334,7 @@ export default function MqttDebugger() {
   const recentInboundRef = useRef(new Map());
   const manualDisconnectRef = useRef(null);
   const everConnectedRef = useRef(null);
+  const userIntendedConnectedRef = useRef(false);
   const handleConnectRef = useRef(null);
   const handleDisconnectRef = useRef(null);
   const handlePublishRef = useRef(null);
@@ -1516,6 +1524,11 @@ export default function MqttDebugger() {
     if (!isAutoScroll) return;
     if (mobileSubEditorOpen) return;
     if (isTextInputFocused()) return;
+    // 移动端：最新消息在顶部，滚到容器顶部
+    if (mobileLogsTopRef.current) {
+      mobileLogsTopRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    // 桌面端：最新消息在底部，滚到锚点
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs, isAutoScroll, mobileSubEditorOpen]);
   useEffect(() => {
@@ -1525,6 +1538,7 @@ export default function MqttDebugger() {
 
   const handleConnect = () => {
     if (!sdkReady) return addLog('error', '', 'SDK 未加载');
+    userIntendedConnectedRef.current = true;
     if (
       runtime?.isCapacitorNative &&
       (connection.protocol === 'mqtt' || connection.protocol === 'mqtts') &&
@@ -1840,6 +1854,7 @@ export default function MqttDebugger() {
             // 10次后停止自动重连
             if (newCount >= 15) {
               addLog('error', '', '🛑 达到最大重连次数(15)，停止重连');
+              userIntendedConnectedRef.current = false;
               newClient.end(true);
             }
           }
@@ -1899,6 +1914,7 @@ export default function MqttDebugger() {
   };
 
   const handleDisconnect = () => {
+    userIntendedConnectedRef.current = false;
     // 保存当前订阅列表供重连使用
     lastSubscriptionsRef.current = [...subscriptions];
     // 停止定时发送
@@ -2050,6 +2066,24 @@ export default function MqttDebugger() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
+  }, []);
+
+  // 后台恢复自动重连：回到前台时检测连接状态，如果之前是连接状态则自动重连
+  useEffect(() => {
+    const onVisChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!userIntendedConnectedRef.current) return;
+      // 短暂延迟让 WebView 恢复
+      setTimeout(() => {
+        if (!userIntendedConnectedRef.current) return;
+        const c = clientRef.current;
+        if (c?.connected) return;
+        addLog('system', '', '📱 从后台恢复，尝试重新连接...');
+        handleConnectRef.current?.();
+      }, 500);
+    };
+    document.addEventListener('visibilitychange', onVisChange);
+    return () => document.removeEventListener('visibilitychange', onVisChange);
   }, []);
 
   // 快捷键支持
@@ -2385,6 +2419,25 @@ export default function MqttDebugger() {
           </div>
 
           <div className={`${t.card} border rounded-2xl p-4 space-y-3`}>
+            <div className="flex items-center gap-2">
+              <select
+                className={`flex-1 min-w-0 ${t.bgInput} border ${t.border} text-xs rounded-xl px-3 py-2 outline-none ${t.text}`}
+                onChange={handleLoadConfig}
+                value={connection.name || ''}
+              >
+                <option value="" disabled>加载预设配置...</option>
+                {savedConfigs.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+              </select>
+              <button type="button" onClick={handleSaveConfig} title="保存当前配置" className={`shrink-0 p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-xl ${t.textSecondary}`}>
+                <Save className="w-4 h-4" />
+              </button>
+              {connection.name && (
+                <button type="button" onClick={handleDeleteConfig} title="删除配置" className={`shrink-0 p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-xl ${t.textMuted} hover:text-rose-500 transition-colors`}>
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <div className={`text-xs font-semibold ${t.textMuted}`}>协议</div>
@@ -2521,18 +2574,42 @@ export default function MqttDebugger() {
   };
 
   const renderMobileMessagesView = () => {
-    const receivedLogs = filteredMessageLogs.filter((l) => l && l.type === 'received');
+    const messageLogs = filteredMessageLogs.filter((l) => l && (l.type === 'received' || l.type === 'sent'));
+    const displayLogs = [...messageLogs].reverse();
     return (
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+      <div ref={mobileLogsTopRef} className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
         <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#0B1120]/90'} backdrop-blur-xl border-b ${t.border} px-4 pt-[calc(var(--nr-header-pt)+var(--nr-safe-top))] pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className={`text-sm font-bold ${t.text}`}>订阅消息</div>
+              <div className={`text-sm font-bold ${t.text}`}>消息</div>
               <div className={`text-[11px] ${t.textMuted} truncate`}>
                 {connectStatus === 'connected' ? `${connection.host}:${connection.port}` : '未连接'}
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAutoScroll(!isAutoScroll)}
+                className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-colors ${
+                  isAutoScroll
+                    ? (theme === 'light' ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300')
+                    : `${t.bgTertiary} ${t.border} ${t.textMuted}`
+                }`}
+                title={isAutoScroll ? '自动滚动已开启' : '自动滚动已暂停'}
+              >
+                {isAutoScroll ? 'Auto' : 'Paused'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const idx = topicSegmentOptions.indexOf(topicSegments);
+                  setTopicSegments(topicSegmentOptions[(idx + 1) % topicSegmentOptions.length]);
+                }}
+                className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-colors ${t.bgTertiary} ${t.border} ${t.textMuted}`}
+                title="Topic 显示段数（点击切换）"
+              >
+                T:{topicSegments === 0 ? 'All' : topicSegments}
+              </button>
               <button
                 type="button"
                 onClick={() => setMobileSubEditorOpen(true)}
@@ -2598,50 +2675,73 @@ export default function MqttDebugger() {
         </header>
 
         <div className="px-4 pt-4 pb-[calc(5.5rem+var(--nr-safe-bottom))] space-y-3">
-          {receivedLogs.length === 0 ? (
+          {displayLogs.length === 0 ? (
             <div className={`flex flex-col items-center justify-center min-h-[55vh] ${t.textMuted}`}>
               <MessageSquare className="w-12 h-12 mb-3 opacity-30" />
-              <p className="text-sm">暂无订阅消息</p>
-              <p className="text-xs mt-1">连接并订阅 Topic 后，收到的消息会显示在这里</p>
+              <p className="text-sm">暂无消息</p>
+              <p className="text-xs mt-1">连接并订阅 Topic 后，收发的消息会显示在这里</p>
             </div>
           ) : (
-            receivedLogs.map((log) => (
-              <div key={log.id} className="flex gap-3 group">
-                <div className={`text-[10px] ${t.textMuted} min-w-[54px] pt-1 font-mono`}>{log.timestamp}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold uppercase ${
-                      theme === 'light' ? 'text-emerald-600 border-emerald-200 bg-emerald-50' : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
-                    }`}>received</span>
-                    {log.topic && <span className={`text-xs ${t.textSecondary} font-semibold font-mono truncate`}>{log.topic}</span>}
+            displayLogs.map((log) => {
+              const isSent = log.type === 'sent';
+              const accent = isSent
+                ? (theme === 'light' ? 'border-blue-200' : 'border-blue-500/30')
+                : (theme === 'light' ? 'border-emerald-200' : 'border-emerald-500/30');
+              const payloadBg = isSent
+                ? (theme === 'light' ? 'bg-blue-50 border border-blue-100 text-blue-900' : 'bg-blue-500/5 border border-blue-500/20 text-blue-200')
+                : (theme === 'light' ? 'bg-emerald-50 border border-emerald-100 text-emerald-900' : 'bg-emerald-500/5 border border-emerald-500/20 text-emerald-200');
+              const topicFull = log.topic || '';
+              const topicParts = topicFull.split('/');
+              const isExpanded = expandedTopicIds.has(log.id);
+              const needTruncate = topicSegments > 0 && topicParts.length > topicSegments;
+              const topicDisplay = (!needTruncate || isExpanded) ? topicFull : '.../' + topicParts.slice(-topicSegments).join('/');
+              return (
+                <div key={log.id} className={`${t.card} border ${accent} rounded-xl p-3 space-y-1.5`}>
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold mr-1.5 ${
+                        isSent
+                          ? (theme === 'light' ? 'bg-blue-100 text-blue-600' : 'bg-blue-500/15 text-blue-300')
+                          : (theme === 'light' ? 'bg-emerald-100 text-emerald-600' : 'bg-emerald-500/15 text-emerald-300')
+                      }`}>{isSent ? 'TX' : 'RX'}</span>
+                      {topicFull && (
+                        <span
+                          className={`text-[10px] font-semibold font-mono break-all ${t.text} ${needTruncate ? 'cursor-pointer' : ''}`}
+                          onClick={needTruncate ? () => setExpandedTopicIds((prev) => {
+                            const next = new Set(prev);
+                            next.has(log.id) ? next.delete(log.id) : next.add(log.id);
+                            return next;
+                          }) : undefined}
+                          title={needTruncate ? (isExpanded ? '点击收起' : '点击展开完整 Topic') : undefined}
+                        >{topicDisplay}</span>
+                      )}
+                      <span className={`text-[9px] ${t.textMuted} font-mono ml-1.5 whitespace-nowrap`}>{log.timestamp}</span>
+                    </div>
                     <button
                       type="button"
                       onClick={() => navigator.clipboard.writeText(log.payload)}
-                      className={`ml-auto ${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded transition-all`}
+                      className={`shrink-0 ${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded transition-all`}
                       title="复制 payload"
                     >
-                      <Copy className="w-3 h-3"/>
+                      <Copy className="w-3.5 h-3.5"/>
                     </button>
                   </div>
-                  <div className={`p-3 rounded-xl text-xs break-all whitespace-pre-wrap border font-mono ${
-                    theme === 'light' ? 'bg-emerald-50 border-emerald-100 text-emerald-900' : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-200'
-                  }`}>
+                  <div className={`p-3 rounded-lg text-xs whitespace-pre-wrap font-mono ${payloadBg}`} style={{ overflowWrap: 'anywhere' }}>
                     {logViewMode === 'hex' ? (
                       <div className={`${theme === 'light' ? 'text-purple-600' : 'text-purple-300'} tracking-wider`}>{toHex(log.payload)}</div>
                     ) : (
                       (() => {
                         const { isJson, formatted } = formatJsonPayload(log.payload);
                         return isJson ? (
-                          <pre className={`${theme === 'light' ? 'text-indigo-600' : 'text-indigo-300'} overflow-x-auto`}>{formatted}</pre>
+                          <pre className={`${theme === 'light' ? 'text-indigo-600' : 'text-indigo-300'} whitespace-pre-wrap`} style={{ overflowWrap: 'anywhere' }}>{formatted}</pre>
                         ) : formatted;
                       })()
                     )}
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
-          <div ref={logsEndRef} />
         </div>
 
         <SubscriptionSheet
