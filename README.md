@@ -89,6 +89,16 @@ Portable zip:
 npm run desktop:portable
 ```
 
+## Android
+
+```bash
+npx vite build
+npx cap sync android
+cd android && ./gradlew assembleDebug
+```
+
+APK output: `android/app/build/outputs/apk/debug/app-debug.apk`
+
 ## Release assets (Windows)
 
 - Installer: `Northrealm Setup <version>.exe`
