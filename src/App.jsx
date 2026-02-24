@@ -150,6 +150,55 @@ export default function MqttDebugger() {
   const [pubRetain, setPubRetain] = useState(false); 
   const [showQuickActionsPanel, setShowQuickActionsPanel] = useState(false);
   const [quickActionQuery, setQuickActionQuery] = useState('');
+  const [quickActionGroupCollapsed, setQuickActionGroupCollapsed] = useState(() => {
+    try {
+      const raw = localStorage.getItem('mqtt_quick_action_group_collapsed');
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('mqtt_quick_action_group_collapsed', JSON.stringify(quickActionGroupCollapsed || {}));
+    } catch {
+      // ignore
+    }
+  }, [quickActionGroupCollapsed]);
+  const quickActionGroupModeOptions = ['smart', 'topic-prefix'];
+  const [quickActionGroupMode, setQuickActionGroupMode] = useState(() => {
+    try {
+      const raw = String(localStorage.getItem('mqtt_quick_action_group_mode') || '').trim();
+      return quickActionGroupModeOptions.includes(raw) ? raw : 'smart';
+    } catch {
+      return 'smart';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('mqtt_quick_action_group_mode', quickActionGroupMode);
+    } catch {
+      // ignore
+    }
+  }, [quickActionGroupMode]);
+  const quickActionTopicPrefixDepthOptions = [1, 2, 3, 4, 0]; // 0 = 全部
+  const [quickActionTopicPrefixDepth, setQuickActionTopicPrefixDepth] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem('mqtt_quick_action_topic_prefix_depth'));
+      return quickActionTopicPrefixDepthOptions.includes(v) ? v : 2;
+    } catch {
+      return 2;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('mqtt_quick_action_topic_prefix_depth', String(quickActionTopicPrefixDepth));
+    } catch {
+      // ignore
+    }
+  }, [quickActionTopicPrefixDepth]);
   const [recentActionIds, setRecentActionIds] = useState(() => {
     try {
       const raw = localStorage.getItem('mqtt_recent_actions');
@@ -694,6 +743,52 @@ export default function MqttDebugger() {
     });
   };
 
+  // KISS: 兼容历史数据中 id 的 number/string 差异，统一 key 比较。
+  const actionIdKey = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
+
+  // 分组优先级：手动分组 > 自动分组规则
+  const getActionGroup = (action) => {
+    if (action?.group) return { group: action.group, displayName: action?.name || '' };
+
+    const name = String(action?.name || '').trim();
+    const topic = String(action?.topic || '').trim();
+
+    if (quickActionGroupMode === 'topic-prefix') {
+      const parts = topic.split('/').map((x) => x.trim()).filter(Boolean);
+      if (parts.length === 0) return { group: '未分组', displayName: name || '' };
+      const depth = Number(quickActionTopicPrefixDepth);
+      const groupParts = depth > 0 ? parts.slice(0, depth) : parts;
+      const tailParts = depth > 0 ? parts.slice(depth) : [];
+      const group = groupParts.join('/');
+      const displayName = name || (tailParts.length > 0 ? tailParts.join('/') : parts[parts.length - 1]);
+      return { group: group || '未分组', displayName: displayName || '' };
+    }
+
+    // smart: 名称前缀优先，其次 Topic 前缀
+    const candidates = ['/', '::', ':', '：'];
+    let best = null;
+    for (const sep of candidates) {
+      const idx = name.indexOf(sep);
+      if (idx <= 0 || idx >= name.length - sep.length) continue;
+      if (!best || idx < best.idx || (idx === best.idx && sep.length > best.sep.length)) {
+        best = { idx, sep };
+      }
+    }
+    if (best) {
+      const group = name.slice(0, best.idx).trim();
+      const displayName = name.slice(best.idx + best.sep.length).trim();
+      if (group && displayName) return { group, displayName };
+    }
+    if (topic) {
+      const parts = topic.split('/');
+      if (parts.length >= 2) {
+        const group = parts.slice(0, -1).join('/');
+        return { group, displayName: name || parts[parts.length - 1] };
+      }
+    }
+    return { group: '未分组', displayName: name || '' };
+  };
+
   const persistRecentActions = (next) => {
     try {
       localStorage.setItem('mqtt_recent_actions', JSON.stringify(next));
@@ -703,9 +798,11 @@ export default function MqttDebugger() {
   };
 
   const recordRecentAction = (actionId) => {
-    const id = actionId;
+    const id = actionIdKey(actionId);
+    if (!id) return;
     setRecentActionIds((prev) => {
-      const next = [id, ...prev.filter((x) => x !== id)].slice(0, 20);
+      const prevIds = Array.isArray(prev) ? prev.map((x) => actionIdKey(x)).filter(Boolean) : [];
+      const next = [id, ...prevIds.filter((x) => x !== id)].slice(0, 20);
       persistRecentActions(next);
       return next;
     });
@@ -722,16 +819,43 @@ export default function MqttDebugger() {
   };
 
   const toggleActionPinned = (actionId) => {
+    const id = actionIdKey(actionId);
     const newActions = (quickActions || []).map((a) => (
-      a.id === actionId ? { ...a, pinned: !a.pinned } : a
+      actionIdKey(a?.id) === id ? { ...a, pinned: !a.pinned } : a
     ));
     updateData('actions', newActions);
+  };
+
+  const handleSetActionGroup = (action, e) => {
+    if (e) e.stopPropagation();
+    openInputModal("设置分组（留空则自动分组）", action.group || '', (groupName) => {
+      const trimmed = (groupName || '').trim();
+      const id = actionIdKey(action?.id);
+      const newActions = (quickActions || []).map((a) => (
+        actionIdKey(a?.id) === id ? { ...a, group: trimmed || undefined } : a
+      ));
+      updateData('actions', newActions);
+    });
+  };
+
+  const handleSetGroupForAll = (currentGroup, rows, e) => {
+    if (e) e.stopPropagation();
+    openInputModal("重命名分组", currentGroup === '未分组' ? '' : currentGroup, (newGroup) => {
+      const trimmed = (newGroup || '').trim();
+      if (!trimmed || trimmed === currentGroup) return;
+      const ids = new Set((rows || []).map((r) => actionIdKey(r?.action?.id)).filter(Boolean));
+      const newActions = (quickActions || []).map((a) => (
+        ids.has(actionIdKey(a?.id)) ? { ...a, group: trimmed } : a
+      ));
+      updateData('actions', newActions);
+    });
   };
 
   const handleDeleteAction = (id, e) => {
     if (e) e.stopPropagation();
     openConfirmModal("确定删除此快捷指令?", () => {
-      const newActions = quickActions.filter(t => t.id !== id);
+      const key = actionIdKey(id);
+      const newActions = (quickActions || []).filter((t) => actionIdKey(t?.id) !== key);
       updateData('actions', newActions);
     });
   };
@@ -1393,6 +1517,66 @@ export default function MqttDebugger() {
                 清空
               </button>
             </div>
+            <div className={`${t.bgTertiary} border ${t.border} rounded-xl p-3 mb-2 space-y-3`}>
+              <div className="flex items-center gap-2">
+                <LayoutDashboard className={`w-4 h-4 ${t.textMuted}`} />
+                <span className={`text-xs font-semibold ${t.textSecondary}`}>分组方式</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setQuickActionGroupMode('smart')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                    quickActionGroupMode === 'smart'
+                      ? (theme === 'light' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-200')
+                      : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
+                  }`}
+                  title="手动分组优先；未设置时自动按名称前缀与 Topic 归类"
+                >
+                  智能（名称 + Topic）
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQuickActionGroupMode('topic-prefix')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                    quickActionGroupMode === 'topic-prefix'
+                      ? (theme === 'light' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-200')
+                      : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
+                  }`}
+                  title="手动分组优先；其余按 Topic 前缀段数归类"
+                >
+                  Topic 前缀
+                </button>
+              </div>
+              {quickActionGroupMode === 'topic-prefix' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`text-xs ${t.textMuted}`}>前缀段数</span>
+                  {quickActionTopicPrefixDepthOptions.map((n) => {
+                    const active = quickActionTopicPrefixDepth === n;
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setQuickActionTopicPrefixDepth(n)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-all ${
+                          active
+                            ? (theme === 'light' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200')
+                            : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
+                        }`}
+                        title="按 Topic 前几段分组"
+                      >
+                        {n === 0 ? '全部' : `${n} 段`}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className={`text-[11px] ${t.textMuted} mb-4`}>
+              {quickActionGroupMode === 'topic-prefix'
+                ? `分组规则：手动分组优先；其余按 Topic 前 ${quickActionTopicPrefixDepth === 0 ? '全部' : `${quickActionTopicPrefixDepth} 段`} 自动归类。`
+                : '分组规则：手动分组优先；未设置时自动按“名称前缀 / Topic 前缀”归类。'}
+            </div>
 
             {(() => {
               const q = (quickActionQuery || '').trim().toLowerCase();
@@ -1401,78 +1585,172 @@ export default function MqttDebugger() {
               const filtered = q ? all.filter(match) : all;
               const pinned = !q ? all.filter((a) => a && a.pinned) : [];
               const recent = !q
-                ? recentActionIds.map((id) => all.find((a) => a.id === id)).filter(Boolean).slice(0, 10)
+                ? recentActionIds.map((id) => all.find((a) => actionIdKey(a?.id) === actionIdKey(id))).filter(Boolean).slice(0, 10)
                 : [];
 
-              const Section = ({ title, items }) => (
-                <div className="space-y-2">
-                  <div className={`text-xs font-semibold ${t.textMuted} px-1`}>{title}</div>
-                  <div className="space-y-2">
-                    {items.map((action) => (
-                      <div
-                        key={action.id}
-                        onClick={() => sendQuickAction(action)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            sendQuickAction(action);
-                          }
-                        }}
-                        role="button"
-                        tabIndex={0}
-                        className={`w-full text-left ${t.card} border hover:border-amber-500/30 rounded-xl p-3 transition-all ${t.bgHover}`}
-                        title="点击直接发送"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className={`font-bold text-sm ${t.text} truncate`}>{action.name}</div>
-                            <div className={`text-[11px] ${t.textMuted} truncate mt-1`}>{action.topic}</div>
-                            <div className={`text-[11px] ${t.textSecondary} truncate mt-1 font-mono`}>{String(action.payload || '')}</div>
-                          </div>
-                          <div className="shrink-0 flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); toggleActionPinned(action.id); }}
-                              className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
-                              title={action.pinned ? '取消置顶' : '置顶'}
-                            >
-                              <Star className={`w-4 h-4 ${action.pinned ? (theme === 'light' ? 'text-amber-600' : 'text-amber-300') : t.textMuted}`} fill={action.pinned ? 'currentColor' : 'none'} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleLoadAction(action);
-                                setShowQuickActionsPanel(false);
-                                setQuickActionQuery('');
-                              }}
-                              className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
-                              title="填充到发送区"
-                            >
-                              <Edit2 className={`w-4 h-4 ${t.textMuted}`} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => handleDeleteAction(action.id, e)}
-                              className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
-                              title="删除"
-                            >
-                              <Trash2 className={`w-4 h-4 ${t.textMuted}`} />
-                            </button>
-                            <span className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5`}>
-                              QoS {action.qos ?? 0}{action.retain ? ' · Retain' : ''}
-                            </span>
-                            <div className={`px-3 py-1 rounded-lg text-xs font-bold ${theme === 'light' ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/20 text-amber-300'} flex items-center gap-1`}>
-                              <Zap className="w-3 h-3" />
-                              发送
-                            </div>
-                          </div>
+              const ActionRow = ({ action, displayNameOverride }) => {
+                const { group: resolvedGroup } = getActionGroup(action);
+                return (
+                  <div
+                    onClick={() => sendQuickAction(action)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        sendQuickAction(action);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    className={`w-full text-left ${t.card} border hover:border-amber-500/30 rounded-xl p-3 transition-all ${t.bgHover}`}
+                    title="点击直接发送"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className={`font-bold text-sm ${t.text} truncate`} title={action?.name}>{displayNameOverride || action?.name}</div>
+                        <div className={`text-[11px] ${t.textMuted} truncate mt-1`}>{action?.topic}</div>
+                        {resolvedGroup && resolvedGroup !== '未分组' && (
+                          <div className={`text-[10px] ${t.textMuted} truncate mt-1`}>分组：{resolvedGroup}</div>
+                        )}
+                        <div className={`text-[11px] ${t.textSecondary} truncate mt-1 font-mono`}>{String(action?.payload || '')}</div>
+                      </div>
+                      <div className="shrink-0 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); toggleActionPinned(action?.id); }}
+                          className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                          title={action?.pinned ? '取消置顶' : '置顶'}
+                        >
+                          <Star className={`w-4 h-4 ${action?.pinned ? (theme === 'light' ? 'text-amber-600' : 'text-amber-300') : t.textMuted}`} fill={action?.pinned ? 'currentColor' : 'none'} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleLoadAction(action);
+                            setShowQuickActionsPanel(false);
+                            setQuickActionQuery('');
+                          }}
+                          className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                          title="填充到发送区"
+                        >
+                          <Edit2 className={`w-4 h-4 ${t.textMuted}`} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleSetActionGroup(action, e)}
+                          className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                          title="设置分组（留空则自动）"
+                        >
+                          <Layout className={`w-4 h-4 ${action?.group ? (theme === 'light' ? 'text-indigo-600' : 'text-indigo-300') : t.textMuted}`} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteAction(action?.id, e)}
+                          className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
+                          title="删除"
+                        >
+                          <Trash2 className={`w-4 h-4 ${t.textMuted}`} />
+                        </button>
+                        <span className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5`}>
+                          QoS {action?.qos ?? 0}{action?.retain ? ' · Retain' : ''}
+                        </span>
+                        <div className={`px-3 py-1 rounded-lg text-xs font-bold ${theme === 'light' ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/20 text-amber-300'} flex items-center gap-1`}>
+                          <Zap className="w-3 h-3" />
+                          发送
                         </div>
                       </div>
-                    ))}
+                    </div>
                   </div>
-                </div>
-              );
+                );
+              };
+
+              const Section = ({ title, items, grouped = false }) => {
+                if (!grouped) {
+                  return (
+                    <div className="space-y-2">
+                      <div className={`text-xs font-semibold ${t.textMuted} px-1`}>{title}</div>
+                      <div className="space-y-2">
+                        {items.map((action) => (
+                          <ActionRow
+                            key={actionIdKey(action?.id) || `${String(action?.name || '')}|${String(action?.topic || '')}|${String(action?.payload || '')}`}
+                            action={action}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                const groupedMap = new Map();
+                for (const action of (items || [])) {
+                  const { group, displayName } = getActionGroup(action);
+                  if (!groupedMap.has(group)) groupedMap.set(group, []);
+                  groupedMap.get(group).push({ action, displayName });
+                }
+                const groups = Array.from(groupedMap.entries());
+                groups.sort((a, b) => {
+                  if (a[0] === '未分组' && b[0] !== '未分组') return 1;
+                  if (b[0] === '未分组' && a[0] !== '未分组') return -1;
+                  return String(a[0]).localeCompare(String(b[0]));
+                });
+
+                return (
+                  <div className="space-y-2">
+                    <div className={`text-xs font-semibold ${t.textMuted} px-1`}>{title}</div>
+                    <div className="space-y-3">
+                      {groups.map(([group, rows]) => {
+                        const isCollapsed = !!quickActionGroupCollapsed?.[group];
+                        return (
+                          <div key={group} className={`${t.card} border rounded-xl p-3`}>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setQuickActionGroupCollapsed((prev) => ({ ...(prev || {}), [group]: !prev?.[group] }))}
+                                className={`flex-1 flex items-center justify-between gap-3 ${t.bgHover} rounded-lg px-2 py-1.5 transition-colors`}
+                                title={isCollapsed ? '展开' : '收起'}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {isCollapsed ? (
+                                    <ChevronDown className={`w-4 h-4 ${t.textMuted}`} />
+                                  ) : (
+                                    <ChevronUp className={`w-4 h-4 ${t.textMuted}`} />
+                                  )}
+                                  <div className={`text-sm font-bold ${t.text} truncate`}>{group}</div>
+                                  <div className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5 shrink-0`}>
+                                    {rows.length}
+                                  </div>
+                                </div>
+                                <div className={`text-[11px] ${t.textMuted} shrink-0`}>
+                                  {isCollapsed ? '展开' : '收起'}
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => handleSetGroupForAll(group, rows, e)}
+                                className={`p-1.5 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors shrink-0`}
+                                title="重命名分组"
+                              >
+                                <Edit2 className={`w-3.5 h-3.5 ${t.textMuted}`} />
+                              </button>
+                            </div>
+                            {!isCollapsed && (
+                              <div className="space-y-2 mt-3">
+                                {rows.map(({ action, displayName }) => (
+                                  <ActionRow
+                                    key={actionIdKey(action?.id) || `${String(action?.name || '')}|${String(action?.topic || '')}|${String(action?.payload || '')}`}
+                                    action={action}
+                                    displayNameOverride={displayName || action?.name}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              };
 
               return (
                 <div className="space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
@@ -1482,9 +1760,9 @@ export default function MqttDebugger() {
                     </div>
                   )}
 
-                  {pinned.length > 0 && <Section title={`置顶（${pinned.length}）`} items={pinned} />}
-                  {recent.length > 0 && <Section title="最近使用" items={recent} />}
-                  <Section title={q ? `搜索结果（${filtered.length}）` : `全部（${filtered.length}）`} items={filtered} />
+                  {pinned.length > 0 && <Section title={`置顶（${pinned.length}）`} items={pinned} grouped />}
+                  {recent.length > 0 && <Section title="最近使用" items={recent} grouped />}
+                  <Section title={q ? `搜索结果（${filtered.length}）` : `全部（${filtered.length}）`} items={filtered} grouped={filtered.length > 0} />
 
                   {filtered.length === 0 && (
                     <div className={`text-center py-10 border border-dashed ${t.border} rounded-xl text-sm ${t.textMuted}`}>
