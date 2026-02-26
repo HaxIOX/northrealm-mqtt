@@ -143,16 +143,24 @@ export default function MqttDebugger() {
   const [subscriptions, setSubscriptions] = useState([]);
   const [subscriptionsCollapsed, setSubscriptionsCollapsed] = useState(true);
   const [subTopic, setSubTopic] = useState('test/topic');
+  const [subMonitorSelectedTopics, setSubMonitorSelectedTopics] = useState([]);
   
   const [pubTopic, setPubTopic] = useState('test/topic');
   const [pubMessage, setPubMessage] = useState('{"msg": "Hello MQTT"}');
   const [pubQoS, setPubQoS] = useState(0);
   const [pubRetain, setPubRetain] = useState(false); 
+  const pubMessageTextareaRef = useRef(null);
+  const [publishEditorOpen, setPublishEditorOpen] = useState(false);
+  const [publishEditorTopic, setPublishEditorTopic] = useState('');
+  const [publishEditorPayload, setPublishEditorPayload] = useState('');
   const [showQuickActionsPanel, setShowQuickActionsPanel] = useState(false);
   const [quickActionQuery, setQuickActionQuery] = useState('');
+  const [showGroupModeSettings, setShowGroupModeSettings] = useState(false);
+  const [editingAction, setEditingAction] = useState(null);
+  const quickActionsScrollRef = useRef(null);
   const [quickActionGroupCollapsed, setQuickActionGroupCollapsed] = useState(() => {
     try {
-      const raw = localStorage.getItem('mqtt_quick_action_group_collapsed');
+      const raw = sessionStorage.getItem('mqtt_quick_action_group_collapsed');
       if (!raw) return {};
       const parsed = JSON.parse(raw);
       return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
@@ -162,7 +170,7 @@ export default function MqttDebugger() {
   });
   useEffect(() => {
     try {
-      localStorage.setItem('mqtt_quick_action_group_collapsed', JSON.stringify(quickActionGroupCollapsed || {}));
+      sessionStorage.setItem('mqtt_quick_action_group_collapsed', JSON.stringify(quickActionGroupCollapsed || {}));
     } catch {
       // ignore
     }
@@ -212,10 +220,12 @@ export default function MqttDebugger() {
   // 日志
   const [logs, setLogs] = useState([]);
   const [logFilter, setLogFilter] = useState('');
+  const logFilterInputRef = useRef(null);
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [logViewMode, setLogViewMode] = useState('text');
   const logsEndRef = useRef(null);
   const logIdRef = useRef(0);
+  const msgDedup = useRef({ topic: '', payload: '', ts: 0 });
 
   // 调试：数据包日志（packetsend/packetreceive 会非常频繁，默认关闭）
   const [debugPacketLog, setDebugPacketLog] = useState(() => {
@@ -452,7 +462,7 @@ export default function MqttDebugger() {
           if (data.enc) {
             if (!syncPassphrase) {
               setCloudCryptoError('该 Space ID 使用了端到端加密，需要输入口令才能同步。');
-              addLog('error', '', '云同步需要口令：请在“云同步”里输入口令后重新连接。');
+              addLog('error', '', '云同步需要口令：请在"云同步"里输入口令后重新连接。');
               return;
             }
             decryptJson(syncPassphrase, data.enc)
@@ -676,7 +686,7 @@ export default function MqttDebugger() {
     }
     if (!inputSpaceId.trim()) return;
     if (syncEncryptEnabled && !syncPassphrase) {
-      alert('已启用端到端加密：请先输入“同步口令”。');
+      alert('已启用端到端加密：请先输入"同步口令"。');
       return;
     }
     const id = inputSpaceId.trim();
@@ -732,6 +742,35 @@ export default function MqttDebugger() {
   const handleLoadAction = (action) => {
     setPubTopic(action.topic); setPubMessage(action.payload);
     setPubQoS(action.qos); setPubRetain(action.retain);
+    // 填充后聚焦到发送区，方便继续编辑。
+    setTimeout(() => pubMessageTextareaRef.current?.focus(), 0);
+  };
+
+  const loadPublishDraft = (draft) => {
+    if (!draft) return;
+    if (typeof draft.topic === 'string') setPubTopic(draft.topic);
+    if (typeof draft.payload === 'string') setPubMessage(draft.payload);
+    setTimeout(() => pubMessageTextareaRef.current?.focus(), 0);
+  };
+
+  const toggleSubMonitorTopicSelection = (topic) => {
+    const t = String(topic || '');
+    setSubMonitorSelectedTopics((prev) =>
+      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]
+    );
+  };
+
+  const openPublishEditor = () => {
+    setPublishEditorTopic(pubTopic);
+    setPublishEditorPayload(pubMessage);
+    setPublishEditorOpen(true);
+  };
+
+  const applyPublishEditor = () => {
+    setPubTopic(publishEditorTopic);
+    setPubMessage(publishEditorPayload);
+    setPublishEditorOpen(false);
+    setTimeout(() => pubMessageTextareaRef.current?.focus(), 0);
   };
 
   const handleFireAction = (action) => {
@@ -745,6 +784,16 @@ export default function MqttDebugger() {
 
   // KISS: 兼容历史数据中 id 的 number/string 差异，统一 key 比较。
   const actionIdKey = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
+
+  // KISS: React key / DOM 查找用的稳定 key，避免把 payload 原文塞进 data-* 属性。
+  const actionRowKey = (action) => {
+    const id = actionIdKey(action?.id);
+    if (id) return `id:${id}`;
+    const raw = `${String(action?.name || '')}|${String(action?.topic || '')}|${String(action?.payload || '')}`;
+    let h = 5381;
+    for (let i = 0; i < raw.length; i += 1) h = ((h << 5) + h) + raw.charCodeAt(i);
+    return `h:${(h >>> 0).toString(16)}`;
+  };
 
   // 分组优先级：手动分组 > 自动分组规则
   const getActionGroup = (action) => {
@@ -818,6 +867,49 @@ export default function MqttDebugger() {
     }
   };
 
+  // UX: 打开弹窗时沿用上次展开/收起状态（会话内记忆）。
+
+  // 搜索时自动展开命中的分组并滚动到对应指令。
+  useEffect(() => {
+    if (!showQuickActionsPanel) return;
+    const q = (quickActionQuery || '').trim().toLowerCase();
+    if (!q) return;
+    const all = Array.isArray(quickActions) ? quickActions : [];
+    const match = (a) => `${a?.name || ''} ${a?.topic || ''} ${a?.payload || ''}`.toLowerCase().includes(q);
+    const first = all.find(match);
+    if (!first) return;
+
+    const { group } = getActionGroup(first);
+    setQuickActionGroupCollapsed(prev => ({ ...(prev || {}), [group]: false }));
+
+    const key = actionRowKey(first);
+    setTimeout(() => {
+      const doScroll = () => {
+        const root = quickActionsScrollRef.current;
+        if (!root) return;
+        const esc = (s) => {
+          try {
+            if (typeof window !== 'undefined' && window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(s);
+          } catch {
+            // ignore
+          }
+          return String(s).replace(/["\\]/g, '\\$&');
+        };
+        const el = root.querySelector(`[data-action-key="${esc(key)}"]`);
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ block: 'center' });
+        }
+      };
+
+      // 等待一次渲染：先展开分组，再定位目标行。
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(doScroll));
+      } else {
+        setTimeout(doScroll, 30);
+      }
+    }, 0);
+  }, [showQuickActionsPanel, quickActionQuery, quickActions, quickActionGroupMode, quickActionTopicPrefixDepth]);
+
   const toggleActionPinned = (actionId) => {
     const id = actionIdKey(actionId);
     const newActions = (quickActions || []).map((a) => (
@@ -858,6 +950,30 @@ export default function MqttDebugger() {
       const newActions = (quickActions || []).filter((t) => actionIdKey(t?.id) !== key);
       updateData('actions', newActions);
     });
+  };
+
+  const handleStartEditAction = (action, e) => {
+    if (e) e.stopPropagation();
+    setEditingAction({
+      id: action.id,
+      name: action.name || '',
+      topic: action.topic || '',
+      payload: action.payload || '',
+      qos: action.qos ?? 0,
+      retain: !!action.retain,
+    });
+  };
+
+  const handleSaveEditAction = () => {
+    if (!editingAction) return;
+    const key = actionIdKey(editingAction.id);
+    const newActions = (quickActions || []).map((a) =>
+      actionIdKey(a?.id) === key
+        ? { ...a, name: editingAction.name, topic: editingAction.topic, payload: editingAction.payload, qos: editingAction.qos, retain: editingAction.retain }
+        : a
+    );
+    updateData('actions', newActions);
+    setEditingAction(null);
   };
 
   // MQTT相关函数
@@ -1109,7 +1225,7 @@ export default function MqttDebugger() {
             hintLines.push('当前端口是 MQTT TCP/TLS（1883/8883），请切换协议到 mqtt/mqtts');
           }
           if (autoReconnect) {
-            hintLines.push('如端口未开会反复重试：可先关闭“自动重连”');
+            hintLines.push('如端口未开会反复重试：可先关闭"自动重连"');
           }
 
           const detailsText = [
@@ -1198,7 +1314,14 @@ export default function MqttDebugger() {
         }
       });
 
-      newClient.on('message', (t, m) => addLog('received', t, m.toString()));
+      newClient.on('message', (t, m) => {
+        const text = m.toString();
+        const now = Date.now();
+        const prev = msgDedup.current;
+        if (prev.topic === t && prev.payload === text && now - prev.ts < 200) return;
+        msgDedup.current = { topic: t, payload: text, ts: now };
+        addLog('received', t, text);
+      });
       setClient(newClient);
     } catch (e) {
       setConnectStatus('error');
@@ -1269,6 +1392,7 @@ export default function MqttDebugger() {
       client.unsubscribe(t, e => {
         if (!e) {
           updateSubscriptions((prev) => prev.filter((i) => i !== t));
+          setSubMonitorSelectedTopics((prev) => prev.filter((x) => x !== t));
           addLog('system', t, '退订成功');
         }
       });
@@ -1329,6 +1453,11 @@ export default function MqttDebugger() {
   // 快捷键支持
   useEffect(() => {
     const handleKeyDown = (e) => {
+      if (publishEditorOpen && e.key === 'Escape') {
+        e.preventDefault();
+        setPublishEditorOpen(false);
+        return;
+      }
       if (eventCenterOpen && e.key === 'Escape') {
         e.preventDefault();
         setEventCenterOpen(false);
@@ -1343,7 +1472,8 @@ export default function MqttDebugger() {
       // Ctrl/Cmd + Enter: 发送消息
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
-        handlePublish();
+        if (publishEditorOpen) applyPublishEditor();
+        else handlePublish();
       }
       // Ctrl/Cmd + D: 断开连接
       if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
@@ -1368,7 +1498,7 @@ export default function MqttDebugger() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [client, connectStatus, reconnectCount, eventCenterOpen, pubTopic, pubMessage, pubQoS, pubRetain, showQuickActionsPanel]);
+  }, [client, connectStatus, reconnectCount, eventCenterOpen, pubTopic, pubMessage, pubQoS, pubRetain, showQuickActionsPanel, publishEditorOpen, publishEditorTopic, publishEditorPayload]);
 
   // 重置统计
   const resetStats = () => {
@@ -1381,15 +1511,40 @@ export default function MqttDebugger() {
   const isJson = (str) => { try { JSON.parse(str); return true; } catch { return false; } };
   const tryFormatJson = (str) => { try { return JSON.stringify(JSON.parse(str), null, 2); } catch { return str; } };
 
+  // KISS: 仅支持 MQTT 常见通配符（+ / #），用于订阅监控的"按主题筛选"。
+  const mqttTopicMatches = (filter, topic) => {
+    const f = String(filter || '');
+    const t = String(topic || '');
+    if (!f) return true;
+    if (!t) return false;
+    if (f === t) return true;
+
+    const fl = f.split('/');
+    const tl = t.split('/');
+    for (let i = 0; i < fl.length; i += 1) {
+      const seg = fl[i];
+      if (seg === '#') {
+        // MQTT 规范要求 # 只能出现在最后一段；这里按常见实现处理。
+        return i === fl.length - 1;
+      }
+      if (i >= tl.length) return false;
+      if (seg === '+') continue;
+      if (seg !== tl[i]) return false;
+    }
+    return tl.length === fl.length;
+  };
+
   const isMessageLog = (log) => (
     log.type === 'sent' ||
     log.type === 'received' ||
     (log.type === 'error' && (!!log.topic || !isDevMode))
   );
   const messageLogs = logs.filter(isMessageLog);
-  const filteredMessageLogs = messageLogs.filter((log) => (
-    !logFilter || ((log.topic + log.payload + log.type + (log.details || '')).toLowerCase().includes(logFilter.toLowerCase()))
-  ));
+  const filteredMessageLogs = messageLogs
+    .filter((log) => (subMonitorSelectedTopics.length === 0 || subMonitorSelectedTopics.some((t) => mqttTopicMatches(t, log.topic))))
+    .filter((log) => (
+      !logFilter || ((log.topic + log.payload + log.type + (log.details || '')).toLowerCase().includes(logFilter.toLowerCase()))
+    ));
   const eventLogs = logs.filter((log) => !isMessageLog(log));
   const filteredEventLogs = eventLogs.filter((log) => (
     !eventFilter || ((log.topic + log.payload + log.type + (log.details || '')).toLowerCase().includes(eventFilter.toLowerCase()))
@@ -1406,25 +1561,26 @@ export default function MqttDebugger() {
     });
   })();
   const commonActions = (() => {
+    const MAX_COMMON = 6;
     const all = Array.isArray(quickActions) ? quickActions : [];
     const byId = new Map(all.map((a) => [a.id, a]));
     const chosen = [];
 
     for (const action of pinnedActions) {
-      if (action && chosen.length < 3) chosen.push(action);
+      if (action && chosen.length < MAX_COMMON) chosen.push(action);
     }
 
-    if (chosen.length < 3) {
+    if (chosen.length < MAX_COMMON) {
       for (const id of (recentActionIds || [])) {
         const action = byId.get(id);
         if (!action) continue;
         if (chosen.some((a) => a.id === action.id)) continue;
         chosen.push(action);
-        if (chosen.length >= 3) break;
+        if (chosen.length >= MAX_COMMON) break;
       }
     }
 
-    return chosen.slice(0, 3);
+    return chosen.slice(0, MAX_COMMON);
   })();
 
   // 统计卡片组件
@@ -1482,6 +1638,74 @@ export default function MqttDebugger() {
         </div>
       )}
 
+      {publishEditorOpen && (
+        <div className="fixed inset-0 bg-black/50 z-[62] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setPublishEditorOpen(false)}
+            className="absolute inset-0"
+          />
+          <div className={`relative ${t.bgSecondary} rounded-2xl shadow-2xl max-w-3xl w-full border ${t.border} p-6`}>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}>
+                <Edit2 className="w-5 h-5 text-indigo-500" />
+                编辑发送消息
+              </h3>
+              <button
+                type="button"
+                onClick={() => setPublishEditorOpen(false)}
+                className={`${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded-lg transition-colors`}
+                title="关闭 (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className={`text-xs ${t.textMuted} block mb-1`}>Topic</label>
+                <input
+                  type="text"
+                  value={publishEditorTopic}
+                  onChange={(e) => setPublishEditorTopic(e.target.value)}
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm font-mono focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}
+                  placeholder="Topic (e.g. test/topic)"
+                />
+              </div>
+              <div>
+                <label className={`text-xs ${t.textMuted} block mb-1`}>Payload</label>
+                <textarea
+                  autoFocus
+                  value={publishEditorPayload}
+                  onChange={(e) => setPublishEditorPayload(e.target.value)}
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-y focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all min-h-[260px] ${t.text}`}
+                  placeholder='Payload (e.g. {"msg": "Hello"})'
+                />
+                <div className={`text-[10px] mt-1 ${t.textMuted}`}>快捷键：Ctrl/Cmd + Enter 应用并关闭</div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => setPublishEditorOpen(false)}
+                className={`px-4 py-2 ${t.bgTertiary} ${t.bgHover} rounded-xl text-sm font-medium transition-colors ${t.textSecondary}`}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={applyPublishEditor}
+                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20"
+              >
+                应用
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showQuickActionsPanel && (
         <div className="fixed inset-0 bg-black/50 z-[65] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
           <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-2xl w-full border ${t.border} p-6`}>
@@ -1517,11 +1741,26 @@ export default function MqttDebugger() {
                 清空
               </button>
             </div>
-            <div className={`${t.bgTertiary} border ${t.border} rounded-xl p-3 mb-2 space-y-3`}>
-              <div className="flex items-center gap-2">
-                <LayoutDashboard className={`w-4 h-4 ${t.textMuted}`} />
-                <span className={`text-xs font-semibold ${t.textSecondary}`}>分组方式</span>
-              </div>
+            <div className={`${t.bgTertiary} border ${t.border} rounded-xl mb-2 overflow-hidden`}>
+              <button
+                type="button"
+                onClick={() => setShowGroupModeSettings(prev => !prev)}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 ${t.bgHover} transition-colors`}
+              >
+                <div className="flex items-center gap-2">
+                  <LayoutDashboard className={`w-4 h-4 ${t.textMuted}`} />
+                  <span className={`text-xs font-semibold ${t.textSecondary}`}>分组方式</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${t.border} ${t.textMuted}`}>
+                    {quickActionGroupMode === 'smart' ? '智能' : 'Topic 前缀'}
+                  </span>
+                </div>
+                {showGroupModeSettings
+                  ? <ChevronUp className={`w-3.5 h-3.5 ${t.textMuted}`} />
+                  : <ChevronDown className={`w-3.5 h-3.5 ${t.textMuted}`} />
+                }
+              </button>
+              {showGroupModeSettings && (
+                <div className="px-3 pb-3 space-y-3">
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -1571,11 +1810,13 @@ export default function MqttDebugger() {
                   })}
                 </div>
               )}
-            </div>
-            <div className={`text-[11px] ${t.textMuted} mb-4`}>
-              {quickActionGroupMode === 'topic-prefix'
-                ? `分组规则：手动分组优先；其余按 Topic 前 ${quickActionTopicPrefixDepth === 0 ? '全部' : `${quickActionTopicPrefixDepth} 段`} 自动归类。`
-                : '分组规则：手动分组优先；未设置时自动按“名称前缀 / Topic 前缀”归类。'}
+              <div className={`text-[11px] ${t.textMuted}`}>
+                {quickActionGroupMode === 'topic-prefix'
+                  ? `手动分组优先；其余按 Topic 前 ${quickActionTopicPrefixDepth === 0 ? '全部' : `${quickActionTopicPrefixDepth} 段`} 自动归类。`
+                  : '手动分组优先；未设置时自动按"名称前缀 / Topic 前缀"归类。'}
+              </div>
+                </div>
+              )}
             </div>
 
             {(() => {
@@ -1584,14 +1825,14 @@ export default function MqttDebugger() {
               const match = (a) => `${a?.name || ''} ${a?.topic || ''} ${a?.payload || ''}`.toLowerCase().includes(q);
               const filtered = q ? all.filter(match) : all;
               const pinned = !q ? all.filter((a) => a && a.pinned) : [];
-              const recent = !q
-                ? recentActionIds.map((id) => all.find((a) => actionIdKey(a?.id) === actionIdKey(id))).filter(Boolean).slice(0, 10)
-                : [];
+              // UX: 快捷指令弹窗不展示"最近使用"（用户反馈干扰查找）。
 
               const ActionRow = ({ action, displayNameOverride }) => {
                 const { group: resolvedGroup } = getActionGroup(action);
+                const rowKey = actionRowKey(action);
                 return (
                   <div
+                    data-action-key={rowKey}
                     onClick={() => sendQuickAction(action)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
@@ -1624,14 +1865,9 @@ export default function MqttDebugger() {
                         </button>
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleLoadAction(action);
-                            setShowQuickActionsPanel(false);
-                            setQuickActionQuery('');
-                          }}
+                          onClick={(e) => handleStartEditAction(action, e)}
                           className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
-                          title="填充到发送区"
+                          title="编辑指令"
                         >
                           <Edit2 className={`w-4 h-4 ${t.textMuted}`} />
                         </button>
@@ -1672,7 +1908,7 @@ export default function MqttDebugger() {
                       <div className="space-y-2">
                         {items.map((action) => (
                           <ActionRow
-                            key={actionIdKey(action?.id) || `${String(action?.name || '')}|${String(action?.topic || '')}|${String(action?.payload || '')}`}
+                            key={actionRowKey(action)}
                             action={action}
                           />
                         ))}
@@ -1699,13 +1935,13 @@ export default function MqttDebugger() {
                     <div className={`text-xs font-semibold ${t.textMuted} px-1`}>{title}</div>
                     <div className="space-y-3">
                       {groups.map(([group, rows]) => {
-                        const isCollapsed = !!quickActionGroupCollapsed?.[group];
+                        const isCollapsed = quickActionGroupCollapsed?.[group] ?? true;
                         return (
                           <div key={group} className={`${t.card} border rounded-xl p-3`}>
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => setQuickActionGroupCollapsed((prev) => ({ ...(prev || {}), [group]: !prev?.[group] }))}
+                                onClick={() => setQuickActionGroupCollapsed((prev) => ({ ...(prev || {}), [group]: !isCollapsed }))}
                                 className={`flex-1 flex items-center justify-between gap-3 ${t.bgHover} rounded-lg px-2 py-1.5 transition-colors`}
                                 title={isCollapsed ? '展开' : '收起'}
                               >
@@ -1733,17 +1969,17 @@ export default function MqttDebugger() {
                                 <Edit2 className={`w-3.5 h-3.5 ${t.textMuted}`} />
                               </button>
                             </div>
-                            {!isCollapsed && (
-                              <div className="space-y-2 mt-3">
-                                {rows.map(({ action, displayName }) => (
-                                  <ActionRow
-                                    key={actionIdKey(action?.id) || `${String(action?.name || '')}|${String(action?.topic || '')}|${String(action?.payload || '')}`}
-                                    action={action}
-                                    displayNameOverride={displayName || action?.name}
-                                  />
-                                ))}
-                              </div>
-                            )}
+                              {!isCollapsed && (
+                                <div className="space-y-2 mt-3">
+                                  {rows.map(({ action, displayName }) => (
+                                    <ActionRow
+                                      key={actionRowKey(action)}
+                                      action={action}
+                                      displayNameOverride={displayName || action?.name}
+                                    />
+                                  ))}
+                                </div>
+                              )}
                           </div>
                         );
                       })}
@@ -1753,7 +1989,7 @@ export default function MqttDebugger() {
               };
 
               return (
-                <div className="space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
+                <div ref={quickActionsScrollRef} className="space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
                   {!client?.connected && (
                     <div className={`p-3 rounded-xl border ${theme === 'light' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-amber-500/10 border-amber-500/20 text-amber-200'} text-sm`}>
                       提示：当前未连接，点击发送会提示错误。请先连接 MQTT。
@@ -1761,7 +1997,6 @@ export default function MqttDebugger() {
                   )}
 
                   {pinned.length > 0 && <Section title={`置顶（${pinned.length}）`} items={pinned} grouped />}
-                  {recent.length > 0 && <Section title="最近使用" items={recent} grouped />}
                   <Section title={q ? `搜索结果（${filtered.length}）` : `全部（${filtered.length}）`} items={filtered} grouped={filtered.length > 0} />
 
                   {filtered.length === 0 && (
@@ -1772,6 +2007,104 @@ export default function MqttDebugger() {
                 </div>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {editingAction && (
+        <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
+          <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-lg w-full border ${t.border} p-6`}>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}>
+                <Edit2 className="w-5 h-5 text-indigo-500" />
+                编辑指令
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingAction(null)}
+                className={`${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded-lg transition-colors`}
+                title="关闭"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className={`text-xs ${t.textMuted} block mb-1`}>名称</label>
+                <input
+                  type="text"
+                  value={editingAction.name}
+                  onChange={(e) => setEditingAction({ ...editingAction, name: e.target.value })}
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}
+                  placeholder="指令名称"
+                />
+              </div>
+              <div>
+                <label className={`text-xs ${t.textMuted} block mb-1`}>Topic</label>
+                <input
+                  type="text"
+                  value={editingAction.topic}
+                  onChange={(e) => setEditingAction({ ...editingAction, topic: e.target.value })}
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm font-mono focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}
+                  placeholder="test/topic"
+                />
+              </div>
+              <div>
+                <label className={`text-xs ${t.textMuted} block mb-1`}>Payload</label>
+                <textarea
+                  value={editingAction.payload}
+                  onChange={(e) => setEditingAction({ ...editingAction, payload: e.target.value })}
+                  onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); handleSaveEditAction(); } }}
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-y focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all min-h-[120px] ${t.text}`}
+                  placeholder='{"msg": "Hello"}'
+                />
+                <div className={`text-[10px] mt-1 ${t.textMuted}`}>Ctrl/Cmd + Enter 保存</div>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <label className={`text-xs ${t.textMuted}`}>QoS</label>
+                  {[0, 1, 2].map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => setEditingAction({ ...editingAction, qos: q })}
+                      className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-all ${
+                        editingAction.qos === q
+                          ? (theme === 'light' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-200')
+                          : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
+                      }`}
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+                <label className={`flex items-center gap-1.5 text-xs ${t.textMuted} cursor-pointer`}>
+                  <input
+                    type="checkbox"
+                    checked={editingAction.retain}
+                    onChange={(e) => setEditingAction({ ...editingAction, retain: e.target.checked })}
+                    className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-indigo-600"
+                  />
+                  Retain
+                </label>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => setEditingAction(null)}
+                className={`px-4 py-2 ${t.bgTertiary} ${t.bgHover} rounded-xl text-sm font-medium transition-colors ${t.textSecondary}`}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEditAction}
+                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20"
+              >
+                保存
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2151,12 +2484,53 @@ export default function MqttDebugger() {
                   <button onClick={handleSubscribe} disabled={!client?.connected} className={`${theme === 'light' ? 'bg-emerald-100 hover:bg-emerald-600 text-emerald-600 hover:text-white' : 'bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white'} px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 transition-all`}>订阅</button>
                 </div>
                 <div className="space-y-1 px-2">
-                  {subscriptions.map(sub => (
-                    <div key={sub} className={`flex items-center justify-between ${t.card} px-3 py-2 rounded-lg border group hover:border-emerald-500/30 transition-all`}>
-                      <span className="text-xs text-emerald-500 font-mono truncate mr-2" title={sub}>{sub}</span>
-                      <button onClick={() => handleUnsubscribe(sub)} className={`${t.textMuted} hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all`}><Trash2 className="w-3 h-3"/></button>
+                  {subMonitorSelectedTopics.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSubMonitorSelectedTopics([])}
+                      className={`text-[10px] ${t.textMuted} hover:text-emerald-500 transition-colors mb-1 px-1`}
+                    >
+                      清除筛选（已选 {subMonitorSelectedTopics.length}）
+                    </button>
+                  )}
+                  {subscriptions.map(sub => {
+                    const isSelected = subMonitorSelectedTopics.includes(sub);
+                    return (
+                    <div key={sub} className={`flex items-center justify-between px-3 py-2 rounded-lg border group transition-all ${
+                      isSelected
+                        ? (theme === 'light' ? 'bg-emerald-50 border-emerald-300' : 'bg-emerald-500/10 border-emerald-500/30')
+                        : `${t.card} hover:border-emerald-500/20`
+                    }`}>
+                      <button
+                        type="button"
+                        onClick={() => toggleSubMonitorTopicSelection(sub)}
+                        className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
+                        title={isSelected ? `已选中：${sub}（再点取消）` : `点击筛选：${sub}`}
+                      >
+                        <span
+                          className={`w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 transition-all ${
+                            isSelected
+                              ? 'bg-emerald-500 shadow-sm shadow-emerald-500/30'
+                              : (theme === 'light' ? 'border-2 border-slate-300' : 'border-2 border-slate-600')
+                          }`}
+                        >
+                          {isSelected && (
+                            <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
+                          )}
+                        </span>
+                        <span className={`text-xs font-mono truncate ${isSelected ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-emerald-500'}`} title={sub}>{sub}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleUnsubscribe(sub); }}
+                        className={`${t.textMuted} hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all`}
+                        title="取消订阅"
+                      >
+                        <Trash2 className="w-3 h-3"/>
+                      </button>
                     </div>
-                  ))}
+                    );
+                  })}
                   {subscriptions.length === 0 && <div className={`text-xs ${t.textMuted} text-center py-4 border border-dashed ${t.border} rounded-lg`}>暂无订阅</div>}
                 </div>
               </div>
@@ -2198,6 +2572,7 @@ export default function MqttDebugger() {
                 value={logFilter}
                 onChange={e => setLogFilter(e.target.value)}
                 placeholder="搜索日志..."
+                ref={logFilterInputRef}
                 className={`pl-9 pr-4 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm w-56 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all ${t.text} placeholder:${t.textMuted}`}
               />
             </div>
@@ -2264,9 +2639,26 @@ export default function MqttDebugger() {
                         (theme === 'light' ? 'text-rose-600 border-rose-200 bg-rose-50' : 'text-rose-400 border-rose-500/30 bg-rose-500/10')
                       }`}>{log.type}</span>
                       {log.topic && <span className={`text-xs ${t.textSecondary} font-semibold font-mono`}>{log.topic}</span>}
-                      <button onClick={() => navigator.clipboard.writeText(log.payload)} className={`ml-auto opacity-0 group-hover:opacity-100 ${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded transition-all`}>
-                        <Copy className="w-3 h-3"/>
-                      </button>
+                      <div className="ml-auto flex items-center gap-1">
+                        {!!log.topic && typeof log.payload === 'string' && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); loadPublishDraft({ topic: log.topic, payload: log.payload }); }}
+                            className={`opacity-0 group-hover:opacity-100 ${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded transition-all`}
+                            title="填充到发送区编辑"
+                          >
+                            <Edit2 className="w-3 h-3"/>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => navigator.clipboard.writeText(String(log.payload ?? ''))}
+                          className={`opacity-0 group-hover:opacity-100 ${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded transition-all`}
+                          title="复制 Payload"
+                        >
+                          <Copy className="w-3 h-3"/>
+                        </button>
+                      </div>
                     </div>
                     <div className={`p-4 rounded-xl text-sm break-all whitespace-pre-wrap border font-mono ${
                       log.type === 'sent' ? (theme === 'light' ? 'bg-blue-50 border-blue-100 text-blue-900' : 'bg-blue-500/5 border-blue-500/20 text-blue-200') :
@@ -2396,12 +2788,23 @@ export default function MqttDebugger() {
 
             {/* 消息输入和发送 */}
             <div className="flex gap-3">
-              <textarea
-                value={pubMessage}
-                onChange={(e) => setPubMessage(e.target.value)}
-                className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all h-24 ${t.text}`}
-                placeholder='Payload (e.g. {"msg": "Hello"})'
-              />
+              <div className="flex-1 min-w-0 relative">
+                <textarea
+                  ref={pubMessageTextareaRef}
+                  value={pubMessage}
+                  onChange={(e) => setPubMessage(e.target.value)}
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all h-24 ${t.text}`}
+                  placeholder='Payload (e.g. {"msg": "Hello"})'
+                />
+                <button
+                  type="button"
+                  onClick={openPublishEditor}
+                  className={`absolute top-2 right-2 p-2 rounded-lg ${t.bgTertiary} border ${t.border} ${t.textSecondary} ${t.bgHover} transition-colors`}
+                  title="编辑即将发送的消息"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+              </div>
               <button
                 onClick={handlePublish}
                 disabled={!client?.connected}
