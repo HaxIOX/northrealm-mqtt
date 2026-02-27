@@ -4,6 +4,11 @@
 
 - (TBD)
 
+## 0.1.7 - 2026-02-27
+
+- UI: set app/window title to `Northrealm`
+- Fix: isolate quick-action group collapse state between `置顶` and `全部`
+
 ## 0.1.0 - 2025-12-26
 
 - Branding: rename to Northrealm (NR), English-first naming
@@ -15,4 +20,3 @@
 ## 0.0.3
 
 - Existing release (see git history)
-

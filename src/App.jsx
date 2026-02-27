@@ -1900,7 +1900,7 @@ export default function MqttDebugger() {
                 );
               };
 
-              const Section = ({ title, items, grouped = false }) => {
+              const Section = ({ title, items, grouped = false, collapseNamespace = 'default' }) => {
                 if (!grouped) {
                   return (
                     <div className="space-y-2">
@@ -1935,13 +1935,14 @@ export default function MqttDebugger() {
                     <div className={`text-xs font-semibold ${t.textMuted} px-1`}>{title}</div>
                     <div className="space-y-3">
                       {groups.map(([group, rows]) => {
-                        const isCollapsed = quickActionGroupCollapsed?.[group] ?? true;
+                        const collapseKey = `${collapseNamespace}::${group}`;
+                        const isCollapsed = quickActionGroupCollapsed?.[collapseKey] ?? true;
                         return (
                           <div key={group} className={`${t.card} border rounded-xl p-3`}>
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => setQuickActionGroupCollapsed((prev) => ({ ...(prev || {}), [group]: !isCollapsed }))}
+                                onClick={() => setQuickActionGroupCollapsed((prev) => ({ ...(prev || {}), [collapseKey]: !isCollapsed }))}
                                 className={`flex-1 flex items-center justify-between gap-3 ${t.bgHover} rounded-lg px-2 py-1.5 transition-colors`}
                                 title={isCollapsed ? '展开' : '收起'}
                               >
@@ -1996,8 +1997,8 @@ export default function MqttDebugger() {
                     </div>
                   )}
 
-                  {pinned.length > 0 && <Section title={`置顶（${pinned.length}）`} items={pinned} grouped />}
-                  <Section title={q ? `搜索结果（${filtered.length}）` : `全部（${filtered.length}）`} items={filtered} grouped={filtered.length > 0} />
+                  {pinned.length > 0 && <Section title={`置顶（${pinned.length}）`} items={pinned} grouped collapseNamespace="pinned" />}
+                  <Section title={q ? `搜索结果（${filtered.length}）` : `全部（${filtered.length}）`} items={filtered} grouped={filtered.length > 0} collapseNamespace="all" />
 
                   {filtered.length === 0 && (
                     <div className={`text-center py-10 border border-dashed ${t.border} rounded-xl text-sm ${t.textMuted}`}>
