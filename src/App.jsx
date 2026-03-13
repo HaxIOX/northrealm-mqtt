@@ -255,7 +255,15 @@ export default function MqttDebugger() {
   // 定时发送
   const [timerEnabled, setTimerEnabled] = useState(false);
   const [timerInterval, setTimerInterval] = useState(1000);
+  const [timerNextSendAt, setTimerNextSendAt] = useState(null);
+  const [timerNow, setTimerNow] = useState(Date.now());
   const timerRef = useRef(null);
+  useEffect(() => {
+    if (!timerEnabled || !timerNextSendAt) return undefined;
+    setTimerNow(Date.now());
+    const ticker = setInterval(() => setTimerNow(Date.now()), 100);
+    return () => clearInterval(ticker);
+  }, [timerEnabled, timerNextSendAt]);
 
   // 自动重订阅
   const [autoResubscribe, setAutoResubscribe] = useState(true);
@@ -320,6 +328,7 @@ export default function MqttDebugger() {
     accentText: 'text-indigo-400',
     accentLight: 'bg-indigo-500/10',
   };
+  const themedSelectClass = `themed-select ${t.bgInput} border ${t.border} outline-none transition-all ${t.text}`;
 
   // --- 初始化逻辑 ---
   useEffect(() => {
@@ -746,11 +755,42 @@ export default function MqttDebugger() {
     setTimeout(() => pubMessageTextareaRef.current?.focus(), 0);
   };
 
+  const fillQuickAction = (action, opts = {}) => {
+    const { closePanel = true, clearQuery = true } = opts;
+    if (!action) return;
+    if (closePanel) setShowQuickActionsPanel(false);
+    if (clearQuery) setQuickActionQuery('');
+    handleLoadAction(action);
+  };
+
   const loadPublishDraft = (draft) => {
     if (!draft) return;
     if (typeof draft.topic === 'string') setPubTopic(draft.topic);
     if (typeof draft.payload === 'string') setPubMessage(draft.payload);
     setTimeout(() => pubMessageTextareaRef.current?.focus(), 0);
+  };
+
+  const toggleQuickActionGroupCollapsed = (collapseKey) => {
+    const root = quickActionsScrollRef.current;
+    const scrollTop = root?.scrollTop ?? null;
+
+    setQuickActionGroupCollapsed((prev) => {
+      const prevMap = prev || {};
+      const nextCollapsed = !(prevMap[collapseKey] ?? true);
+      return { ...prevMap, [collapseKey]: nextCollapsed };
+    });
+
+    if (scrollTop == null) return;
+
+    const restoreScroll = () => {
+      if (quickActionsScrollRef.current) quickActionsScrollRef.current.scrollTop = scrollTop;
+    };
+
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(restoreScroll);
+    } else {
+      setTimeout(restoreScroll, 0);
+    }
   };
 
   const toggleSubMonitorTopicSelection = (topic) => {
@@ -774,12 +814,16 @@ export default function MqttDebugger() {
   };
 
   const handleFireAction = (action) => {
-    if (!client || !client.connected) return addLog('error', '', '请先连接服务器');
+    if (!client || !client.connected) {
+      addLog('error', '', '请先连接服务器');
+      return false;
+    }
     const payload = action.payload;
     client.publish(action.topic, payload, { qos: action.qos, retain: action.retain }, (err) => {
       if (err) addLog('error', action.topic, `指令 "${action.name}" 发送失败: ${err.message}`);
       else addLog('sent', action.topic, payload, `指令: ${action.name}`);
     });
+    return true;
   };
 
   // KISS: 兼容历史数据中 id 的 number/string 差异，统一 key 比较。
@@ -859,8 +903,8 @@ export default function MqttDebugger() {
 
   const sendQuickAction = (action, opts = {}) => {
     const { closePanel = true } = opts;
-    recordRecentAction(action.id);
-    handleFireAction(action);
+    const dispatched = handleFireAction(action);
+    if (dispatched) recordRecentAction(action.id);
     if (closePanel) {
       setShowQuickActionsPanel(false);
       setQuickActionQuery('');
@@ -880,7 +924,8 @@ export default function MqttDebugger() {
     if (!first) return;
 
     const { group } = getActionGroup(first);
-    setQuickActionGroupCollapsed(prev => ({ ...(prev || {}), [group]: false }));
+    const collapseKey = `all::${group}`;
+    setQuickActionGroupCollapsed(prev => ({ ...(prev || {}), [collapseKey]: false }));
 
     const key = actionRowKey(first);
     setTimeout(() => {
@@ -1357,11 +1402,7 @@ export default function MqttDebugger() {
     // 保存当前订阅列表供重连使用
     lastSubscriptionsRef.current = [...subscriptions];
     // 停止定时发送
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-      setTimerEnabled(false);
-    }
+    if (timerRef.current) stopPublishTimer();
     const currentClient = clientRef.current || client;
     if (currentClient) {
       // 强制结束连接，传入true表示不再重连
@@ -1415,32 +1456,45 @@ export default function MqttDebugger() {
     });
   };
 
+  const stopPublishTimer = (logMessage = '') => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setTimerEnabled(false);
+    setTimerNextSendAt(null);
+    if (logMessage) addLog('system', '', logMessage);
+  };
+
+  const scheduleNextTimerRun = (delayMs = timerInterval) => {
+    const normalizedDelay = Math.max(0, Number(delayMs) || 0);
+    setTimerNextSendAt(Date.now() + normalizedDelay);
+  };
+
+  const startPublishTimer = () => {
+    setTimerEnabled(true);
+    scheduleNextTimerRun(timerInterval);
+    addLog('system', '', `定时发送已启动，间隔 ${timerInterval}ms`);
+
+    timerRef.current = setInterval(() => {
+      const parsedMessage = pubMessage;
+      client.publish(pubTopic, parsedMessage, { qos: pubQoS, retain: pubRetain }, e => {
+        if (e) addLog('error', pubTopic, e.message);
+        else addLog('sent', pubTopic, parsedMessage, `定时发送 QoS: ${pubQoS}`);
+      });
+      scheduleNextTimerRun(timerInterval);
+    }, timerInterval);
+  };
+
   // 定时发送控制
   const toggleTimer = () => {
     if (timerEnabled) {
-      // 停止定时
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      setTimerEnabled(false);
-      addLog('system', '', '定时发送已停止');
-    } else {
-      // 开始定时
-      if (!client?.connected) return addLog('error', '', '请先连接服务器');
-      if (!pubTopic) return addLog('error', '', '请输入 Topic');
-
-      setTimerEnabled(true);
-      addLog('system', '', `定时发送已启动，间隔 ${timerInterval}ms`);
-
-      timerRef.current = setInterval(() => {
-        const parsedMessage = pubMessage;
-        client.publish(pubTopic, parsedMessage, { qos: pubQoS, retain: pubRetain }, e => {
-          if (e) addLog('error', pubTopic, e.message);
-          else addLog('sent', pubTopic, parsedMessage, `定时发送 QoS: ${pubQoS}`);
-        });
-      }, timerInterval);
+      stopPublishTimer('定时发送已停止');
+      return;
     }
+    if (!client?.connected) return addLog('error', '', '请先连接服务器');
+    if (!pubTopic) return addLog('error', '', '请输入 Topic');
+    startPublishTimer();
   };
 
   // 清理定时器
@@ -1563,7 +1617,7 @@ export default function MqttDebugger() {
   const commonActions = (() => {
     const MAX_COMMON = 6;
     const all = Array.isArray(quickActions) ? quickActions : [];
-    const byId = new Map(all.map((a) => [a.id, a]));
+    const byId = new Map(all.map((a) => [actionIdKey(a?.id), a]));
     const chosen = [];
 
     for (const action of pinnedActions) {
@@ -1572,9 +1626,9 @@ export default function MqttDebugger() {
 
     if (chosen.length < MAX_COMMON) {
       for (const id of (recentActionIds || [])) {
-        const action = byId.get(id);
+        const action = byId.get(actionIdKey(id));
         if (!action) continue;
-        if (chosen.some((a) => a.id === action.id)) continue;
+        if (chosen.some((a) => actionIdKey(a?.id) === actionIdKey(action?.id))) continue;
         chosen.push(action);
         if (chosen.length >= MAX_COMMON) break;
       }
@@ -1582,6 +1636,22 @@ export default function MqttDebugger() {
 
     return chosen.slice(0, MAX_COMMON);
   })();
+  const timerRemainingMs = timerEnabled && timerNextSendAt
+    ? Math.max(0, timerNextSendAt - timerNow)
+    : 0;
+  const timerProgress = timerEnabled
+    ? Math.min(100, Math.max(0, ((timerInterval - timerRemainingMs) / Math.max(timerInterval, 1)) * 100))
+    : 0;
+  const formatTimerCountdown = (ms) => {
+    if (ms >= 60000) {
+      const minutes = Math.floor(ms / 60000);
+      const seconds = Math.floor((ms % 60000) / 1000);
+      return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+    }
+    if (ms >= 10000) return `${(ms / 1000).toFixed(0)}s`;
+    if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+    return `${Math.max(0, Math.round(ms))}ms`;
+  };
 
   // 统计卡片组件
   const StatCard = ({ label, value, icon: Icon, trendValue, positive, color = 'blue' }) => {
@@ -1857,6 +1927,18 @@ export default function MqttDebugger() {
                       <div className="shrink-0 flex items-center gap-2">
                         <button
                           type="button"
+                          onClick={(e) => { e.stopPropagation(); fillQuickAction(action); }}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                            theme === 'light'
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                              : 'bg-indigo-500/10 text-indigo-200 border-indigo-500/30 hover:bg-indigo-500/20'
+                          }`}
+                          title="填充到发送区"
+                        >
+                          填充
+                        </button>
+                        <button
+                          type="button"
                           onClick={(e) => { e.stopPropagation(); toggleActionPinned(action?.id); }}
                           className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
                           title={action?.pinned ? '取消置顶' : '置顶'}
@@ -1942,7 +2024,8 @@ export default function MqttDebugger() {
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => setQuickActionGroupCollapsed((prev) => ({ ...(prev || {}), [collapseKey]: !isCollapsed }))}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => toggleQuickActionGroupCollapsed(collapseKey)}
                                 className={`flex-1 flex items-center justify-between gap-3 ${t.bgHover} rounded-lg px-2 py-1.5 transition-colors`}
                                 title={isCollapsed ? '展开' : '收起'}
                               >
@@ -2313,7 +2396,7 @@ export default function MqttDebugger() {
         </div>
 
         {/* 连接配置 */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar px-4">
+        <div className="connection-config-scroll flex-1 overflow-y-auto custom-scrollbar px-4">
 
           {/* 配置折叠面板 */}
           <div className="mb-3">
@@ -2334,7 +2417,7 @@ export default function MqttDebugger() {
             {!configCollapsed && (
               <div className={`mt-2 p-4 ${t.card} rounded-xl border space-y-3 animate-in fade-in slide-in-from-top-2 duration-200`}>
                 <div className="flex gap-2">
-                   <select className={`flex-1 ${t.bgInput} border ${t.border} text-xs rounded-lg px-3 py-2 focus:border-indigo-500 outline-none transition-all ${t.text}`} onChange={handleLoadConfig} value={connection.name || ""}>
+                   <select className={`flex-1 text-xs rounded-lg px-3 py-2 focus:border-indigo-500 ${themedSelectClass}`} onChange={handleLoadConfig} value={connection.name || ""}>
                      <option value="" disabled>加载预设配置...</option>
                      {savedConfigs.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                     </select>
@@ -2350,7 +2433,7 @@ export default function MqttDebugger() {
                      if (name) applyPresetBroker(name);
                    }}
                    disabled={connectStatus !== 'disconnected'}
-                   className={`w-full ${t.bgInput} border ${t.border} text-xs rounded-lg px-3 py-2 focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}
+                   className={`w-full text-xs rounded-lg px-3 py-2 focus:border-indigo-500 disabled:opacity-50 ${themedSelectClass}`}
                  >
                    <option value="">公共服务器预设（快速填充）...</option>
                    {PRESET_BROKERS.map((b) => (
@@ -2362,7 +2445,7 @@ export default function MqttDebugger() {
 
                 <div className="grid grid-cols-2 gap-2">
                   <input type="number" value={connection.port} onChange={(e) => handlePortChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Port"/>
-                  <select value={connection.protocol} onChange={(e) => handleProtocolChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}>
+                  <select value={connection.protocol} onChange={(e) => handleProtocolChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full rounded-lg px-3 py-2 text-sm focus:border-indigo-500 disabled:opacity-50 ${themedSelectClass}`}>
                     <option value="ws">ws://</option>
                     <option value="wss">wss://</option>
                     <option value="mqtt" disabled={!isDesktopShell}>mqtt://{isDesktopShell ? '' : '（桌面端）'}</option>
@@ -2405,7 +2488,7 @@ export default function MqttDebugger() {
                       </div>
                       <div className="flex-1">
                         <label className={`text-[10px] ${t.textMuted} block mb-1`}>协议版本</label>
-                        <select value={advancedConfig.protocolVersion} onChange={(e) => setAdvancedConfig({...advancedConfig, protocolVersion: Number(e.target.value)})} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-2 py-1 text-xs ${t.text}`}>
+                        <select value={advancedConfig.protocolVersion} onChange={(e) => setAdvancedConfig({...advancedConfig, protocolVersion: Number(e.target.value)})} className={`w-full rounded-lg px-2 py-1 text-xs ${themedSelectClass}`}>
                           <option value={3}>MQTT 3.1</option>
                           <option value={4}>MQTT 3.1.1</option>
                           <option value={5}>MQTT 5.0</option>
@@ -2752,6 +2835,32 @@ export default function MqttDebugger() {
               </button>
             </div>
 
+            {timerEnabled && (
+              <div className={`rounded-xl border px-3 py-2.5 ${theme === 'light' ? 'bg-emerald-50/80 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Timer className={`${theme === 'light' ? 'text-emerald-600' : 'text-emerald-300'} w-4 h-4 shrink-0`} />
+                    <div className={`text-xs font-semibold ${theme === 'light' ? 'text-emerald-800' : 'text-emerald-200'} truncate`}>
+                      定时发送运行中
+                    </div>
+                  </div>
+                  <div className={`text-xs font-mono shrink-0 ${theme === 'light' ? 'text-emerald-700' : 'text-emerald-200'}`}>
+                    {formatTimerCountdown(timerRemainingMs)} 后发送
+                  </div>
+                </div>
+                <div className={`h-2 rounded-full overflow-hidden ${theme === 'light' ? 'bg-emerald-100' : 'bg-slate-800/80'}`}>
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-100 ${theme === 'light' ? 'bg-emerald-500' : 'bg-emerald-400'}`}
+                    style={{ width: `${timerProgress}%` }}
+                  />
+                </div>
+                <div className={`mt-2 flex items-center justify-between gap-3 text-[11px] ${theme === 'light' ? 'text-emerald-700/90' : 'text-emerald-200/80'}`}>
+                  <span className="truncate">{pubTopic || '未设置 Topic'}</span>
+                  <span className="shrink-0">每 {timerInterval}ms 一次</span>
+                </div>
+              </div>
+            )}
+
             <div className={`flex items-center gap-2 ${t.bgTertiary} border ${t.border} rounded-xl px-3 py-2 overflow-x-auto custom-scrollbar`}>
               <div className={`text-xs font-semibold ${t.textMuted} shrink-0 flex items-center gap-1`}>
                 <Star className="w-3.5 h-3.5" />
@@ -2760,7 +2869,7 @@ export default function MqttDebugger() {
               <div className="flex items-center gap-2 min-w-0">
                 {commonActions.map((action) => (
                   <button
-                    key={action.id}
+                    key={actionIdKey(action?.id) || action.name}
                     type="button"
                     onClick={() => sendQuickAction(action, { closePanel: false })}
                     className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
@@ -2794,7 +2903,7 @@ export default function MqttDebugger() {
                   ref={pubMessageTextareaRef}
                   value={pubMessage}
                   onChange={(e) => setPubMessage(e.target.value)}
-                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all h-24 ${t.text}`}
+                  className={`payload-textarea custom-scrollbar w-full ${t.bgInput} border ${t.border} rounded-xl px-4 pr-14 py-3 text-sm font-mono resize-y focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all h-24 min-h-[96px] max-h-[38vh] overflow-y-auto ${t.text}`}
                   placeholder='Payload (e.g. {"msg": "Hello"})'
                 />
                 <button
@@ -2920,6 +3029,54 @@ export default function MqttDebugger() {
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: ${theme === 'light' ? '#cbd5e1' : '#334155'}; border-radius: 3px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: ${theme === 'light' ? '#94a3b8' : '#475569'}; }
+        .connection-config-scroll { scrollbar-gutter: stable; }
+        .connection-config-scroll::-webkit-scrollbar { width: 8px; }
+        .connection-config-scroll::-webkit-scrollbar-track {
+          background: ${theme === 'light' ? 'rgba(241,245,249,0.9)' : 'rgba(15,23,42,0.7)'};
+          border-radius: 999px;
+        }
+        .connection-config-scroll::-webkit-scrollbar-thumb {
+          background: ${theme === 'light' ? '#94a3b8' : '#475569'};
+          border-radius: 999px;
+          border: 2px solid transparent;
+          background-clip: padding-box;
+        }
+        .connection-config-scroll::-webkit-scrollbar-thumb:hover {
+          background: ${theme === 'light' ? '#64748b' : '#64748b'};
+        }
+        .themed-select {
+          appearance: none;
+          -webkit-appearance: none;
+          -moz-appearance: none;
+          color-scheme: ${theme === 'light' ? 'light' : 'dark'};
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5 7.5L10 12.5L15 7.5' stroke='${theme === 'light' ? '%2364758b' : '%2394a3b8'}' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 0.75rem center;
+          background-size: 14px 14px;
+          padding-right: 2.5rem;
+        }
+        .themed-select option,
+        .themed-select optgroup {
+          background: ${theme === 'light' ? '#ffffff' : '#0f172a'};
+          color: ${theme === 'light' ? '#0f172a' : '#e2e8f0'};
+        }
+        .themed-select:disabled {
+          cursor: not-allowed;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5 7.5L10 12.5L15 7.5' stroke='${theme === 'light' ? '%2394a3b8' : '%23475569'}' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        }
+        .payload-textarea { scrollbar-gutter: stable; }
+        .payload-textarea::-webkit-scrollbar { width: 10px; }
+        .payload-textarea::-webkit-scrollbar-thumb {
+          background: ${theme === 'light' ? '#94a3b8' : '#475569'};
+          border-radius: 999px;
+          border: 2px solid transparent;
+          background-clip: padding-box;
+        }
+        .payload-textarea::-webkit-scrollbar-thumb:hover { background: ${theme === 'light' ? '#64748b' : '#64748b'}; }
+        .payload-textarea::-webkit-resizer {
+          background:
+            linear-gradient(135deg, transparent 0 58%, ${theme === 'light' ? '#cbd5e1' : '#475569'} 58% 66%, transparent 66% 74%, ${theme === 'light' ? '#94a3b8' : '#64748b'} 74% 82%, transparent 82% 100%);
+        }
         @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
         @keyframes slide-in-from-bottom-2 { from { transform: translateY(8px); } to { transform: translateY(0); } }
         .animate-in { animation: fade-in 0.2s ease-out, slide-in-from-bottom-2 0.2s ease-out; }
