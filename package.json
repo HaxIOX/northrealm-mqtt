@@ -1,7 +1,7 @@
 {
   "name": "northrealm-mqtt",
   "private": true,
-  "version": "0.1.9",
+  "version": "0.1.10",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -56,7 +56,8 @@
     },
     "win": {
       "target": [
-        "nsis"
+        "nsis",
+        "portable"
       ],
       "signAndEditExecutable": false
     }

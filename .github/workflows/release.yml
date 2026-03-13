@@ -37,5 +37,6 @@ jobs:
           generate_release_notes: true
           files: |
             release/*Setup*.exe
+            release/*Portable*.exe
             release/latest.yml
             release/*.blockmap
