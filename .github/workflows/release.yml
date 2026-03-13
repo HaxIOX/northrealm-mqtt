@@ -24,7 +24,12 @@ jobs:
         run: npm ci
 
       - name: Build desktop (Windows)
-        run: npm run desktop:build
+        env:
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+        run: |
+          npm run build
+          node scripts/desktop-build-prep.cjs
+          npx electron-builder --win --publish never
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
