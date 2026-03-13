@@ -60,6 +60,9 @@
         "portable"
       ],
       "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "${productName} Portable ${version}.${ext}"
     }
   },
   "keywords": [
