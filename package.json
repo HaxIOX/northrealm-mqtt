@@ -1,7 +1,7 @@
 {
   "name": "northrealm-mqtt",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.1.11",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -15,7 +15,8 @@
     "desktop:portable": "npm run desktop:build && node scripts/portable-zip.cjs",
     "android:add": "npx cap add android",
     "android:sync": "npm run build && npx cap sync android",
-    "android:open": "npx cap open android"
+    "android:open": "npx cap open android",
+    "android:apk": "node scripts/android-build-apk.cjs"
   },
   "dependencies": {
     "@capacitor/core": "^8.0.2",
