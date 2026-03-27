@@ -56,7 +56,7 @@ export default function SubscriptionSheet({
       if (vv) vv.removeEventListener('resize', onResize);
       window.removeEventListener('resize', onResize);
     };
-  }, [open]);
+  }, [open, isNative]);
 
   useEffect(() => {
     if (!open) return;
@@ -70,7 +70,7 @@ export default function SubscriptionSheet({
     } catch {
       return undefined;
     }
-  }, [open]);
+  }, [open, isNative]);
 
   if (!open) return null;
 

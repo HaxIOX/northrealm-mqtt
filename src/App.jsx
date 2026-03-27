@@ -37,6 +37,61 @@ const PRESET_BROKERS = [
   { name: 'Mosquitto 测试服务器', host: 'test.mosquitto.org', ws: 8080, wss: 8081, path: '' }
 ];
 
+const CLIENT_ID_OWNER_TAG = 'whh';
+const CLIENT_ID_APP_TAG = 'NR';
+const CLIENT_ID_DEVICE_CODE_STORAGE_KEY = 'mqtt_client_device_code';
+
+function sanitizeClientIdSegment(value, fallback = 'x', maxLen = 12) {
+  const raw = String(value || '').trim().toLowerCase();
+  const normalized = raw.replace(/[^a-z0-9]/g, '');
+  const sliced = normalized.slice(0, maxLen);
+  return sliced || fallback;
+}
+
+function getClientIdUserTag(username) {
+  return sanitizeClientIdSegment(username, 'usr', 3);
+}
+
+function getClientIdDeviceEnvTag({ isDesktopShell = false, isCapacitorNative = false } = {}) {
+  const ua = (typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string')
+    ? navigator.userAgent.toLowerCase()
+    : '';
+  if (isCapacitorNative) {
+    if (ua.includes('android')) return 'android';
+    if (ua.includes('iphone') || ua.includes('ipad') || ua.includes('ipod') || ua.includes('ios')) return 'ios';
+    return 'mobile';
+  }
+  if (isDesktopShell) {
+    if (ua.includes('windows')) return 'win';
+    if (ua.includes('mac')) return 'mac';
+    if (ua.includes('linux')) return 'linux';
+    return 'desktop';
+  }
+  return 'web';
+}
+
+function getStableClientIdDeviceCode() {
+  try {
+    const saved = localStorage.getItem(CLIENT_ID_DEVICE_CODE_STORAGE_KEY);
+    const normalized = sanitizeClientIdSegment(saved, '', 2);
+    if (normalized.length === 2) return normalized;
+    const next = Math.random().toString(36).slice(2, 4).padEnd(2, '0');
+    localStorage.setItem(CLIENT_ID_DEVICE_CODE_STORAGE_KEY, next);
+    return next;
+  } catch {
+    return Math.random().toString(36).slice(2, 4).padEnd(2, '0');
+  }
+}
+
+const createWindowDefaultClientId = ({ username = '', isDesktopShell = false, isCapacitorNative = false } = {}) => {
+  const owner = sanitizeClientIdSegment(CLIENT_ID_OWNER_TAG, 'nr', 8);
+  const user = getClientIdUserTag(username);
+  const env = sanitizeClientIdSegment(CLIENT_ID_APP_TAG, 'nr', 6).toUpperCase();
+  const deviceEnv = getClientIdDeviceEnvTag({ isDesktopShell, isCapacitorNative });
+  const deviceCode = getStableClientIdDeviceCode();
+  return `${owner}_${user}_${env}_${deviceEnv}_${deviceCode}`;
+};
+
 function topicMatchesFilter(filter, topic) {
   const f = String(filter || '').trim();
   const tpc = String(topic || '');
@@ -84,6 +139,7 @@ export default function MqttDebugger() {
   const runtime = detectRuntime();
   const isElectronRuntime = runtime.isElectronUserAgent;
   const isDesktopShell = runtime.isDesktopShell;
+  const isCapacitorNative = runtime?.isCapacitorNative === true;
   // Android native WebView already handles IME via windowSoftInputMode (adjustResize/adjustPan).
   // Avoid extra VisualViewport-driven rerenders during IME animation (can trigger focus glitches).
   const keyboardInsetPx = useKeyboardInsetPx(!runtime?.isCapacitorNative);
@@ -150,6 +206,10 @@ export default function MqttDebugger() {
   quickActionsRef.current = quickActions;
   const multicastTargetsRef = useRef([]);
   const saveToCloudRef = useRef(null);
+  const windowDefaultClientIdRef = useRef('');
+  if (!windowDefaultClientIdRef.current) {
+    windowDefaultClientIdRef.current = createWindowDefaultClientId({ isDesktopShell, isCapacitorNative });
+  }
 
   // --- 编辑/运行状态 ---
   const [connection, setConnection] = useState(() => {
@@ -161,11 +221,21 @@ export default function MqttDebugger() {
       host: 'broker.emqx.io',
       port: defaultPort,
       path: '/mqtt',
-      clientId: `mqtt_debugger_${Math.random().toString(16).substr(2, 8)}`,
+      clientId: windowDefaultClientIdRef.current,
       username: '',
       password: ''
     };
   });
+  useEffect(() => {
+    if (connectStatus === 'connected') return;
+    const current = String(connection.clientId || '').trim();
+    if (!current) return;
+    if (current !== windowDefaultClientIdRef.current) return;
+    const next = createWindowDefaultClientId({ username: connection.username, isDesktopShell, isCapacitorNative });
+    if (!next || next === current) return;
+    windowDefaultClientIdRef.current = next;
+    setConnection((prev) => (String(prev.clientId || '').trim() === current ? { ...prev, clientId: next } : prev));
+  }, [connection.username, connection.clientId, connectStatus, isDesktopShell, isCapacitorNative]);
 
   const [advancedConfig, setAdvancedConfig] = useState({
     keepalive: 60, clean: true, willEnabled: false,
@@ -1080,28 +1150,6 @@ export default function MqttDebugger() {
     }
   };
 
-  const handleUpdateLoadedAction = () => {
-    if (!loadedQuickAction) return;
-    const loadedId = String(loadedQuickAction.id);
-    const updatedActions = (quickActions || []).map((action) => (
-      String(action?.id) === loadedId
-        ? {
-            ...action,
-            topic: pubTopic,
-            payload: pubMessage,
-            qos: pubQoS,
-            retain: pubRetain,
-          }
-        : action
-    ));
-    updateData('actions', updatedActions);
-    addLog('system', '', `已更新快捷指令: ${loadedQuickAction.name}`);
-  };
-
-  const handleCancelLoadedAction = () => {
-    setLoadedQuickActionId('');
-  };
-
   const shouldDropDuplicateManualPublish = (topic, payload, qos, retain) => {
     const now = Date.now();
     const last = lastManualPublishRef.current;
@@ -1701,18 +1749,10 @@ export default function MqttDebugger() {
     try {
       let clientId = String(connection.clientId || '').trim();
       if (!clientId) {
-        clientId = `mqtt_client_${Math.random().toString(16).slice(2, 10)}`;
+        clientId = createWindowDefaultClientId({ username: connection.username, isDesktopShell, isCapacitorNative });
+        windowDefaultClientIdRef.current = clientId;
         setConnection((prev) => ({ ...prev, clientId }));
-        addLog('system', '', `⚠️ ClientID 为空，已自动生成: ${clientId}`);
-      }
-      // Reduce collision risk: if user is still using an auto-generated prefix, rotate per connect attempt.
-      if (clientId.startsWith('mqtt_debugger_') || clientId.startsWith('mqtt_client_') || clientId.startsWith('nr_')) {
-        const rotated = `mqtt_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 8)}`;
-        if (rotated !== clientId) {
-          clientId = rotated;
-          setConnection((prev) => ({ ...prev, clientId }));
-          addLog('system', '', `💡 已自动更新 ClientID（降低冲突概率）: ${clientId}`);
-        }
+        addLog('system', '', `⚠️ ClientID 为空，已使用窗口默认值: ${clientId}`);
       }
 
       let keepalive = Number(advancedConfig.keepalive);
@@ -2839,37 +2879,6 @@ export default function MqttDebugger() {
     const all = Array.isArray(quickActions) ? quickActions : [];
     const match = (a) => `${a?.name || ''} ${a?.topic || ''} ${a?.payload || ''}`.toLowerCase().includes(q);
     const filtered = q ? all.filter(match) : all;
-    const pinned = !q ? all.filter((a) => a && a.pinned) : [];
-    const recent = !q
-      ? (recentActionIds || []).map((id) => all.find((a) => actionIdKey(a?.id) === actionIdKey(id))).filter(Boolean).slice(0, 10)
-      : [];
-
-    const excludedIds = (() => {
-      if (q) return new Set();
-      const s = new Set();
-      for (const a of pinned) s.add(actionIdKey(a?.id));
-      for (const a of recent) s.add(actionIdKey(a?.id));
-      return s;
-    })();
-
-    const listForGroups = q ? filtered : all.filter((a) => !excludedIds.has(actionIdKey(a?.id)));
-
-    const grouped = (() => {
-      const groupedMap = new Map();
-      for (const action of (listForGroups || [])) {
-        const { group, displayName } = getActionGroup(action);
-        if (!groupedMap.has(group)) groupedMap.set(group, []);
-        groupedMap.get(group).push({ action, displayName });
-      }
-      const groups = Array.from(groupedMap.entries());
-      // "未分组" 放最后，其余按字母排序（中英文都可用）。
-      groups.sort((a, b) => {
-        if (a[0] === '未分组' && b[0] !== '未分组') return 1;
-        if (b[0] === '未分组' && a[0] !== '未分组') return -1;
-        return String(a[0]).localeCompare(String(b[0]));
-      });
-      return groups;
-    })();
 
     const renderMobileActionRow = (action, displayNameOverride) => (
       <div
@@ -2980,7 +2989,7 @@ export default function MqttDebugger() {
                       <button
                         key={actionIdKey(a?.id) || a?.name}
                         type="button"
-                        onClick={() => handleLoadAction(a)}
+                        onClick={() => sendQuickAction(a, { closePanel: false })}
                         className={`text-left ${t.card} border rounded-xl p-3 transition-all ${t.bgHover} hover:border-amber-500/30`}
                         title="点击发送"
                       >
@@ -3043,30 +3052,10 @@ export default function MqttDebugger() {
               />
 
               {loadedQuickAction && (
-                <div className={`${t.bgTertiary} border ${t.border} rounded-xl px-3 py-2.5 flex items-center justify-between gap-3`}>
+                <div className={`${t.bgTertiary} border ${t.border} rounded-xl px-3 py-2.5`}>
                   <div className="min-w-0">
                     <div className={`text-[11px] font-semibold ${t.textMuted}`}>当前快捷指令</div>
                     <div className={`text-sm font-bold ${t.text} truncate`}>{loadedQuickAction.name}</div>
-                  </div>
-                  <div className="shrink-0 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleUpdateLoadedAction}
-                      className={`px-3 py-2 rounded-lg text-xs font-bold transition-all ${
-                        theme === 'light'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
-                          : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20'
-                      }`}
-                    >
-                      更新
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCancelLoadedAction}
-                      className={`px-3 py-2 rounded-lg text-xs font-bold border transition-all ${t.border} ${t.bgSecondary} ${t.bgHover} ${t.textSecondary}`}
-                    >
-                      取消
-                    </button>
                   </div>
                 </div>
               )}
@@ -3329,9 +3318,6 @@ export default function MqttDebugger() {
               const match = (a) => `${a?.name || ''} ${a?.topic || ''} ${a?.payload || ''}`.toLowerCase().includes(q);
               const filtered = q ? all.filter(match) : all;
               const pinned = !q ? all.filter((a) => a && a.pinned) : [];
-              const recent = !q
-                ? recentActionIds.map((id) => all.find((a) => actionIdKey(a?.id) === actionIdKey(id))).filter(Boolean).slice(0, 10)
-                : [];
 
               const ActionRow = ({ action, displayNameOverride }) => (
                 <div
@@ -3511,7 +3497,6 @@ export default function MqttDebugger() {
                   )}
 
                   {pinned.length > 0 && <Section title={`置顶（${pinned.length}）`} items={pinned} />}
-                  {recent.length > 0 && <Section title="最近使用" items={recent} />}
                   <Section title={q ? `搜索结果（${filtered.length}）` : `全部（${filtered.length}）`} items={filtered} grouped={!q && filtered.length > 0} />
 
                   {filtered.length === 0 && (
@@ -4005,6 +3990,15 @@ export default function MqttDebugger() {
                   />
                 )}
 
+                <input
+                  type="text"
+                  value={connection.clientId}
+                  onChange={(e) => setConnection((prev) => ({ ...prev, clientId: e.target.value }))}
+                  disabled={connectStatus === 'connected'}
+                  placeholder="Client ID（留空使用窗口默认）"
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm font-mono focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}
+                />
+
                 <div className="grid grid-cols-2 gap-2">
                   <input type="text" value={connection.username} onChange={(e) => setConnection((prev) => ({ ...prev, username: e.target.value }))} autoComplete="username" autoCorrect="off" autoCapitalize="off" spellCheck={false} disabled={connectStatus === 'connected'} placeholder="用户名" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
                   <input type="password" value={connection.password} onChange={(e) => setConnection((prev) => ({ ...prev, password: e.target.value }))} autoComplete="current-password" autoCorrect="off" autoCapitalize="off" spellCheck={false} disabled={connectStatus === 'connected'} placeholder="密码" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
@@ -4332,16 +4326,16 @@ export default function MqttDebugger() {
           <div className="p-4 h-full flex flex-col gap-3">
 
             {/* 第一行：Topic 和选项 */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0 overflow-x-auto custom-scrollbar pb-1">
               <input
                 type="text"
                 value={pubTopic}
                 onChange={(e) => setPubTopic(e.target.value)}
-                className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm font-mono focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}
+                className={`flex-1 min-w-[220px] ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm font-mono focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}
                 placeholder="Topic（如 test/topic；多个 Topic 用 , 或 ; 分隔以群发）"
               />
 
-              <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2`}>
+              <div className={`shrink-0 flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2`}>
                 <select value={pubQoS} onChange={(e) => setPubQoS(Number(e.target.value))} className={`bg-transparent text-xs outline-none ${t.textSecondary}`}>
                   <option value={0}>QoS 0</option>
                   <option value={1}>QoS 1</option>
@@ -4355,7 +4349,7 @@ export default function MqttDebugger() {
               </div>
 
               {/* 定时发送 */}
-              <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2`}>
+              <div className={`shrink-0 flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2`}>
                 <Timer className={`w-4 h-4 ${t.textMuted}`}/>
                 <input
                   type="text"
@@ -4393,7 +4387,7 @@ export default function MqttDebugger() {
 
               <button
                 onClick={() => setShowQuickActionsPanel(true)}
-                className={`flex items-center gap-1.5 text-xs font-bold ${
+                className={`shrink-0 flex items-center gap-1.5 text-xs font-bold ${
                   theme === 'light'
                     ? 'text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100'
                     : 'text-amber-300 border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20'
@@ -4404,32 +4398,9 @@ export default function MqttDebugger() {
                 <span className={`ml-1 text-[10px] font-semibold ${theme === 'light' ? 'text-amber-600' : 'text-amber-300/80'}`}>{quickActions.length}</span>
               </button>
 
-              <button onClick={handleSaveAction} className={`flex items-center gap-1.5 text-xs font-medium ${theme === 'light' ? 'text-indigo-600 border-indigo-200 bg-indigo-50 hover:bg-indigo-100' : 'text-indigo-400 border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20'} border px-3 py-2 rounded-xl transition-all`}>
+              <button onClick={handleSaveAction} className={`shrink-0 flex items-center gap-1.5 text-xs font-medium ${theme === 'light' ? 'text-indigo-600 border-indigo-200 bg-indigo-50 hover:bg-indigo-100' : 'text-indigo-400 border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20'} border px-3 py-2 rounded-xl transition-all`}>
                 <Plus className="w-3.5 h-3.5"/> 存为指令
               </button>
-              {loadedQuickAction && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleUpdateLoadedAction}
-                    className={`flex items-center gap-1.5 text-xs font-medium ${
-                      theme === 'light'
-                        ? 'text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100'
-                        : 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20'
-                    } border px-3 py-2 rounded-xl transition-all`}
-                  >
-                    <Check className="w-3.5 h-3.5"/> Update: {loadedQuickAction.name}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCancelLoadedAction}
-                    className={`flex items-center gap-1.5 text-xs font-medium border px-3 py-2 rounded-xl transition-all ${t.border} ${t.bgSecondary} ${t.bgHover} ${t.textSecondary}`}
-                  >
-                    <X className="w-3.5 h-3.5"/> Cancel
-                  </button>
-                </>
-              )}
-
             </div>
 
             <div ref={commonActionsContainerRef} className={`flex items-center gap-2 ${t.bgTertiary} border ${t.border} rounded-xl px-3 py-2 overflow-x-auto custom-scrollbar`}>
@@ -4442,7 +4413,7 @@ export default function MqttDebugger() {
                   <button
                     key={actionIdKey(action?.id) || `${String(action?.name || '')}|${String(action?.topic || '')}`}
                     type="button"
-                    onClick={() => handleLoadAction(action)}
+                    onClick={() => sendQuickAction(action, { closePanel: false })}
                     className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
                       theme === 'light'
                         ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
@@ -4450,7 +4421,7 @@ export default function MqttDebugger() {
                     }`}
                     title={`${action.name}\n${action.topic}`}
                   >
-                    {action.name}
+                    <span className="block max-w-[10rem] truncate">{action.name}</span>
                   </button>
                 ))}
                 {Array.from({ length: Math.max(0, maxCommonActions - commonActions.length) }).map((_, idx) => (

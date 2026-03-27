@@ -6,11 +6,11 @@ export default function useKeyboardInsetPx(enabled = true) {
   const [inset, setInset] = useState(0);
 
   useEffect(() => {
-    if (!enabled) { setInset(0); return undefined; }
+    if (!enabled) return undefined;
     if (typeof window === 'undefined') return undefined;
 
     const vv = window.visualViewport;
-    if (!vv) { setInset(0); return undefined; }
+    if (!vv) return undefined;
 
     const update = () => {
       try {
@@ -35,6 +35,8 @@ export default function useKeyboardInsetPx(enabled = true) {
     };
   }, [enabled]);
 
+  if (!enabled) return 0;
+  if (typeof window === 'undefined') return 0;
+  if (!window.visualViewport) return 0;
   return inset;
 }
-
