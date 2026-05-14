@@ -638,7 +638,17 @@ export default function MqttDebugger() {
     const targets = safeReadJsonArray('mqtt_multicast_targets');
     const selectedTargetIds = safeReadJsonArray('mqtt_multicast_selected_ids');
 
-    if (configs) setSavedConfigs(configs);
+    if (configs) {
+      // 验证并修正配置中的协议/端口不匹配
+      const validatedConfigs = configs.map(c => validateAndFixConfig(c));
+      setSavedConfigs(validatedConfigs);
+      // 如果有修正，更新 localStorage
+      if (JSON.stringify(configs) !== JSON.stringify(validatedConfigs)) {
+        try {
+          localStorage.setItem('mqtt_configs', JSON.stringify(validatedConfigs));
+        } catch { /* ignore */ }
+      }
+    }
     if (actions) setQuickActions(actions);
     if (subs) {
       setSubscriptions(subs);
@@ -679,8 +689,10 @@ export default function MqttDebugger() {
           const data = docSnap.data();
           const applyPayload = (payload) => {
             if (Array.isArray(payload?.configs)) {
-              setSavedConfigs(payload.configs);
-              localStorage.setItem('mqtt_configs', JSON.stringify(payload.configs));
+              // 验证并修正配置中的协议/端口不匹配
+              const validatedConfigs = payload.configs.map(c => validateAndFixConfig(c));
+              setSavedConfigs(validatedConfigs);
+              localStorage.setItem('mqtt_configs', JSON.stringify(validatedConfigs));
             }
             if (Array.isArray(payload?.actions)) {
               setQuickActions(payload.actions);
@@ -875,6 +887,50 @@ export default function MqttDebugger() {
       count: safeLogs.length,
       data: safeLogs,
     };
+  };
+
+  // 验证并修正配置中的协议/端口不匹配问题
+  const validateAndFixConfig = (config) => {
+    if (!config || typeof config !== 'object') return config;
+
+    const port = Number(config.port);
+    const protocol = config.protocol;
+
+    // 跳过无效配置
+    if (!protocol || !Number.isFinite(port)) return config;
+
+    let fixed = { ...config };
+    let needsFix = false;
+
+    // WebSocket 协议使用了 MQTT TCP/TLS 端口
+    if ((protocol === 'ws' || protocol === 'wss') && (port === 1883 || port === 8883)) {
+      needsFix = true;
+      // 浏览器环境：切换到正确的 WebSocket 端口
+      if (!isDesktopShell) {
+        fixed.port = protocol === 'wss' ? 8084 : 8083;
+      } else {
+        // 桌面环境：切换到 MQTT TCP 协议
+        fixed.protocol = port === 1883 ? 'mqtt' : 'mqtts';
+      }
+    }
+
+    // MQTT TCP/TLS 协议使用了 WebSocket 端口
+    if ((protocol === 'mqtt' || protocol === 'mqtts') && (port === 8083 || port === 8084)) {
+      needsFix = true;
+      // 浏览器环境：切换到 WebSocket 协议
+      if (!isDesktopShell) {
+        fixed.protocol = port === 8084 ? 'wss' : 'ws';
+      } else {
+        // 桌面环境：切换到正确的 MQTT TCP 端口
+        fixed.port = protocol === 'mqtts' ? 8883 : 1883;
+      }
+    }
+
+    if (needsFix) {
+      console.warn(`[Config] 已自动修正配置 "${config.name}": ${protocol}://${port} → ${fixed.protocol}://${fixed.port}`);
+    }
+
+    return fixed;
   };
 
   const buildBackupPayload = (includePasswords) => {
@@ -1099,7 +1155,42 @@ export default function MqttDebugger() {
 
   const handleLoadConfig = (e) => {
     const config = savedConfigs.find(c => c.name === e.target.value);
-    if (config) setConnection({ ...config, clientId: connection.clientId }); 
+    if (!config) return;
+
+    // 验证并自动修正协议/端口不匹配的问题
+    let correctedConfig = { ...config, clientId: connection.clientId };
+    const port = Number(config.port);
+    const protocol = config.protocol;
+
+    // 检测 WebSocket 协议使用了 MQTT TCP/TLS 端口
+    if ((protocol === 'ws' || protocol === 'wss') && (port === 1883 || port === 8883)) {
+      if (isDesktopShell) {
+        // 桌面版：自动切换到 mqtt/mqtts 协议
+        correctedConfig.protocol = port === 1883 ? 'mqtt' : 'mqtts';
+        addLog('system', '', `⚠️ 已自动修正协议：${protocol}://${port} → ${correctedConfig.protocol}://${port}`);
+      } else {
+        // 浏览器版：自动切换到正确的 WebSocket 端口
+        correctedConfig.port = protocol === 'wss' ? 8084 : 8083;
+        addLog('system', '', `⚠️ 已自动修正端口：${protocol}://${port} → ${protocol}://${correctedConfig.port}`);
+        addLog('system', '', `提示：浏览器不支持 MQTT TCP 端口 (1883/8883)，已改用 WebSocket 端口`);
+      }
+    }
+
+    // 检测 MQTT TCP/TLS 协议使用了 WebSocket 端口
+    if ((protocol === 'mqtt' || protocol === 'mqtts') && (port === 8083 || port === 8084)) {
+      if (isDesktopShell) {
+        // 桌面版：保持 mqtt/mqtts，但切换到正确的端口
+        correctedConfig.port = protocol === 'mqtts' ? 8883 : 1883;
+        addLog('system', '', `⚠️ 已自动修正端口：${protocol}://${port} → ${protocol}://${correctedConfig.port}`);
+      } else {
+        // 浏览器版：切换到 WebSocket 协议
+        correctedConfig.protocol = port === 8084 ? 'wss' : 'ws';
+        addLog('system', '', `⚠️ 已自动修正协议：${protocol}://${port} → ${correctedConfig.protocol}://${port}`);
+        addLog('system', '', `提示：浏览器不支持 MQTT TCP 协议，已改用 WebSocket`);
+      }
+    }
+
+    setConnection(correctedConfig);
   };
 
   const handleDeleteConfig = () => {
