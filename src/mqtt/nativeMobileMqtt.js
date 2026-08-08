@@ -1,191 +1,178 @@
 import { registerPlugin } from '@capacitor/core';
 
-// Mobile native MQTT bridge (Android first).
-// Goal: provide a small mqtt.js-like surface so existing UI logic can stay unchanged (KISS/DRY).
-const NativeMqtt = registerPlugin('NativeMqtt');
+function normalizeError(error) {
+  if (!error) return new Error('Unknown error');
+  if (error instanceof Error) return error;
+  const message = typeof error === 'string'
+    ? error
+    : error.message || error.error || JSON.stringify(error);
+  return new Error(String(message));
+}
 
-const toError = (e) => {
-  if (!e) return new Error('Unknown error');
-  if (e instanceof Error) return e;
-  const msg = typeof e === 'string' ? e : (e.message || e.error || JSON.stringify(e));
-  return new Error(String(msg));
-};
+function normalizeTopics(rawTopics) {
+  if (Array.isArray(rawTopics)) return rawTopics.map((topic) => String(topic || '').trim()).filter(Boolean);
+  if (rawTopics && typeof rawTopics === 'object') return Object.keys(rawTopics).map((topic) => topic.trim()).filter(Boolean);
+  const topic = String(rawTopics || '').trim();
+  return topic ? [topic] : [];
+}
 
-class MobileMqttClient {
-  constructor(url, opts = {}) {
-    this._url = String(url || '');
-    this._opts = opts || {};
-    this._handlers = new Map(); // event -> Set<fn>
-    this._listenerHandles = [];
+class NativeMobileMqttClient {
+  constructor(nativePlugin, url, options = {}) {
+    this.nativePlugin = nativePlugin;
+    this.url = String(url || '');
+    this.options = options || {};
+    this.handlers = new Map();
+    this.listenerHandles = [];
     this.connected = false;
+    this.reconnecting = false;
+    this.disconnecting = false;
   }
 
-  on(event, cb) {
-    const ev = String(event || '');
-    if (!ev || typeof cb !== 'function') return this;
-    if (!this._handlers.has(ev)) this._handlers.set(ev, new Set());
-    this._handlers.get(ev).add(cb);
+  on(eventName, handler) {
+    const event = String(eventName || '');
+    if (!event || typeof handler !== 'function') return this;
+    if (!this.handlers.has(event)) this.handlers.set(event, new Set());
+    this.handlers.get(event).add(handler);
     return this;
   }
 
-  _emit(event, ...args) {
-    const set = this._handlers.get(event);
-    if (!set) return;
-    for (const fn of set) {
-      try { fn(...args); } catch { /* ignore */ }
+  removeListener(eventName, handler) {
+    this.handlers.get(String(eventName || ''))?.delete(handler);
+    return this;
+  }
+
+  emit(eventName, ...args) {
+    for (const handler of this.handlers.get(eventName) || []) {
+      try { handler(...args); } catch { /* isolate consumer handlers */ }
     }
   }
 
-  async _attachNativeListeners() {
-    const add = async (eventName, fn) => {
-      const h = await NativeMqtt.addListener(eventName, fn);
-      this._listenerHandles.push(h);
+  async attachNativeListeners() {
+    const addListener = async (eventName, handler) => {
+      const handle = await this.nativePlugin.addListener(eventName, handler);
+      this.listenerHandles.push(handle);
     };
 
-    await add('connect', (ev) => {
+    await addListener('connect', (event) => {
       this.connected = true;
-      // mqtt.js style connack object fields used by App: sessionPresent/returnCode (best-effort).
-      const connack = { sessionPresent: !!ev?.sessionPresent, returnCode: 0, reconnect: !!ev?.reconnect };
-      this._emit('connect', connack);
-      // Native side already emits a dedicated "reconnect" event; avoid double-emitting.
+      this.reconnecting = false;
+      this.emit('connect', {
+        sessionPresent: !!event?.sessionPresent,
+        returnCode: 0,
+        reconnect: !!event?.reconnect,
+      });
     });
-
-    await add('reconnect', () => {
-      this._emit('reconnect');
+    await addListener('reconnect', () => {
+      this.reconnecting = true;
+      this.emit('reconnect');
     });
-
-    await add('offline', () => {
+    await addListener('offline', () => {
       this.connected = false;
-      this._emit('offline');
+      this.emit('offline');
     });
-
-    await add('close', () => {
+    await addListener('close', () => {
       this.connected = false;
-      this._emit('close');
+      this.reconnecting = false;
+      this.emit('close');
     });
-
-    await add('error', (ev) => {
-      const err = new Error(String(ev?.message || ev?.error || 'Native MQTT error'));
-      if (ev?.code != null) err.code = ev.code;
-      if (ev?.reasonCode != null) err.reasonCode = ev.reasonCode;
-      if (ev?.details != null) err.details = String(ev.details);
-      if (ev?.exception != null) err.exception = String(ev.exception);
-      this._emit('error', err);
+    await addListener('error', (event) => {
+      const error = new Error(String(event?.message || event?.error || 'Native MQTT error'));
+      if (event?.code != null) error.code = event.code;
+      if (event?.reasonCode != null) error.reasonCode = event.reasonCode;
+      if (event?.details != null) error.details = String(event.details);
+      if (event?.exception != null) error.exception = String(event.exception);
+      this.emit('error', error);
     });
-
-    await add('message', (ev) => {
-      const topic = String(ev?.topic || '');
-      const payloadStr = ev?.payload != null ? String(ev.payload) : '';
-      // Keep compatibility with existing code: it calls m.toString().
-      const m = { toString: () => payloadStr };
-      if (ev?.payloadBase64) m.payloadBase64 = String(ev.payloadBase64);
-      const packet = {
-        qos: Number.isFinite(ev?.qos) ? Number(ev.qos) : 0,
-        retain: !!ev?.retain,
-        dup: !!ev?.dup,
-      };
-      this._emit('message', topic, m, packet);
+    await addListener('message', (event) => {
+      const topic = String(event?.topic || '');
+      const payload = event?.payload != null ? String(event.payload) : '';
+      const message = { toString: () => payload };
+      if (event?.payloadBase64) message.payloadBase64 = String(event.payloadBase64);
+      this.emit('message', topic, message, {
+        qos: Number.isFinite(event?.qos) ? Number(event.qos) : 0,
+        retain: !!event?.retain,
+        dup: !!event?.dup,
+      });
     });
   }
 
   async connect() {
-    // Clean up any leftover listeners from a previous connection to prevent duplicate events.
-    await this._cleanupListeners();
+    await this.cleanupListeners();
+    await this.attachNativeListeners();
+    const reconnectPeriod = Number(this.options.reconnectPeriod ?? 0);
+    const connectTimeout = Number(this.options.connectTimeout ?? 10000);
+    const keepalive = Number(this.options.keepalive ?? 60);
 
-    await this._attachNativeListeners();
+    await this.nativePlugin.connect({
+      url: this.url,
+      clientId: String(this.options.clientId || ''),
+      username: String(this.options.username || ''),
+      password: String(this.options.password || ''),
+      clean: this.options.clean !== false,
+      keepalive,
+      connectTimeoutMs: Number.isFinite(connectTimeout) ? connectTimeout : 10000,
+      reconnectPeriodMs: Number.isFinite(reconnectPeriod) ? reconnectPeriod : 0,
+    });
+    return this;
+  }
 
-    const o = this._opts || {};
-    const reconnectPeriod = Number(o.reconnectPeriod ?? 0);
-    const connectTimeout = Number(o.connectTimeout ?? 10_000);
-    const keepalive = Number(o.keepalive ?? 60);
-    const clean = o.clean !== false;
-
-    try {
-      await NativeMqtt.connect({
-        url: this._url,
-        clientId: String(o.clientId || ''),
-        username: String(o.username || ''),
-        password: String(o.password || ''),
-        clean,
-        keepalive,
-        connectTimeoutMs: Number.isFinite(connectTimeout) ? connectTimeout : 10_000,
-        reconnectPeriodMs: Number.isFinite(reconnectPeriod) ? reconnectPeriod : 0,
-      });
-    } catch (e) {
-      // Most errors are emitted via native "error" event (single source of truth).
-      // Only fallback-emit when the plugin bridge itself is missing.
-      const msg = String(e?.message || e || '');
-      if (/plugin is not implemented/i.test(msg)) {
-        this._emit('error', toError(e));
-      }
-      throw e;
+  subscribe(rawTopics, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = {};
     }
-
+    const topics = normalizeTopics(rawTopics);
+    const qos = Number.isFinite(options?.qos) ? Number(options.qos) : 0;
+    Promise.all(topics.map((topic) => this.nativePlugin.subscribe({ topic, qos })))
+      .then(() => callback?.(null))
+      .catch((error) => callback?.(normalizeError(error)));
     return this;
   }
 
-  subscribe(topic, opts, cb) {
-    if (typeof opts === 'function') { cb = opts; opts = {}; }
-    const t = String(topic || '').trim();
-    const qos = Number.isFinite(opts?.qos) ? Number(opts.qos) : 0;
-    NativeMqtt.subscribe({ topic: t, qos })
-      .then(() => { if (typeof cb === 'function') cb(null); })
-      .catch((e) => { if (typeof cb === 'function') cb(toError(e)); });
+  unsubscribe(rawTopics, callback) {
+    const topics = normalizeTopics(rawTopics);
+    Promise.all(topics.map((topic) => this.nativePlugin.unsubscribe({ topic })))
+      .then(() => callback?.(null))
+      .catch((error) => callback?.(normalizeError(error)));
     return this;
   }
 
-  unsubscribe(topic, cb) {
-    const t = String(topic || '').trim();
-    NativeMqtt.unsubscribe({ topic: t })
-      .then(() => { if (typeof cb === 'function') cb(null); })
-      .catch((e) => { if (typeof cb === 'function') cb(toError(e)); });
+  publish(topic, payload, options = {}, callback) {
+    this.nativePlugin.publish({
+      topic: String(topic || '').trim(),
+      payload: payload != null ? String(payload) : '',
+      qos: Number.isFinite(options?.qos) ? Number(options.qos) : 0,
+      retain: !!options?.retain,
+    }).then(() => callback?.(null)).catch((error) => callback?.(normalizeError(error)));
     return this;
   }
 
-  publish(topic, payload, options = {}, cb) {
-    const t = String(topic || '').trim();
-    const o = options || {};
-    const qos = Number.isFinite(o.qos) ? Number(o.qos) : 0;
-    const retain = !!o.retain;
-    const p = payload != null ? String(payload) : '';
-    NativeMqtt.publish({ topic: t, payload: p, qos, retain })
-      .then(() => { if (typeof cb === 'function') cb(null); })
-      .catch((e) => { if (typeof cb === 'function') cb(toError(e)); });
+  end(force = true, callback) {
+    this.disconnecting = true;
+    this.nativePlugin.end({ force: !!force }).catch(() => {}).finally(async () => {
+      this.connected = false;
+      this.reconnecting = false;
+      await this.cleanupListeners();
+      callback?.();
+    });
     return this;
   }
 
-  end(force = true, cb) {
-    const f = !!force;
-    NativeMqtt.end({ force: f })
-      .then(async () => {
-        this.connected = false;
-        await this._cleanupListeners();
-        if (typeof cb === 'function') cb();
-      })
-      .catch(async () => {
-        this.connected = false;
-        await this._cleanupListeners();
-        if (typeof cb === 'function') cb();
-      });
-    return this;
-  }
-
-  async _cleanupListeners() {
-    for (const h of this._listenerHandles) {
-      try { await h.remove(); } catch { /* ignore */ }
+  async cleanupListeners() {
+    for (const handle of this.listenerHandles) {
+      try { await handle.remove(); } catch { /* listener is already gone */ }
     }
-    this._listenerHandles = [];
+    this.listenerHandles = [];
   }
 }
 
-export function createMobileMqttLib() {
+export function createMobileMqttLib(nativePlugin = registerPlugin('NativeMqtt')) {
   return {
     VERSION: 'native-mobile',
-    connect: (url, opts) => {
-      const c = new MobileMqttClient(url, opts);
-      // Fire-and-forget: App listens for 'connect'/'error' events.
-      c.connect().catch(() => { /* handled by native events */ });
-      return c;
+    connect(url, options) {
+      const client = new NativeMobileMqttClient(nativePlugin, url, options);
+      client.connect().catch((error) => client.emit('error', normalizeError(error)));
+      return client;
     },
   };
 }

@@ -8,8 +8,7 @@ export default defineConfig([
   globalIgnores([
     'dist',
     'release',
-    'android/app/build/**',
-    'android/app/src/main/assets/public/assets/**',
+    'android/**',
   ]),
   {
     files: ['**/*.{js,jsx}'],
@@ -33,7 +32,6 @@ export default defineConfig([
     },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
     },
   },
 ])

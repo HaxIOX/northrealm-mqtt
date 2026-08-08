@@ -35,13 +35,6 @@ set APP_HOME=%DIRNAME%
 @rem Resolve any "." and ".." in APP_HOME to make it shorter.
 for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
 
-@rem Prefer the repo-bundled JDK (avoids failures when system JAVA_HOME points to Java 8/11).
-@rem Set NR_GRADLE_USE_SYSTEM_JAVA=1 to opt-out.
-if "%NR_GRADLE_USE_SYSTEM_JAVA%"=="1" goto afterBundledJdk
-set BUNDLED_JDK=%APP_HOME%\..\tools\jdk-21.0.10+7
-if exist "%BUNDLED_JDK%\bin\java.exe" set JAVA_HOME=%BUNDLED_JDK%
-:afterBundledJdk
-
 @rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
 set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
 

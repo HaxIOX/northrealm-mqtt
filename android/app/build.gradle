@@ -7,7 +7,6 @@ android {
         applicationId "com.vibtek.northrealm"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // Bump version so Android installs can be updated without uninstalling during rapid debug iterations.
         versionCode 11
         versionName "0.1.11"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -23,10 +22,6 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
-    }
 }
 
 repositories {
@@ -40,8 +35,8 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
-    implementation "org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5"
     implementation project(':capacitor-android')
+    implementation "org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

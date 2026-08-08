@@ -6,7 +6,7 @@ const args = new Set(process.argv.slice(2));
 const shouldKill = args.has('--kill');
 
 function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getProductExeName() {
@@ -36,14 +36,14 @@ function killProcess(imageName) {
 async function ensureRemovableDir(dirPath, retries = 10) {
   if (!fs.existsSync(dirPath)) return;
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
       fs.rmSync(dirPath, { recursive: true, force: true });
       return;
-    } catch (e) {
-      const code = e && typeof e === 'object' ? e.code : undefined;
+    } catch (error) {
+      const code = error && typeof error === 'object' ? error.code : undefined;
       const mayBeLocked = code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
-      if (!mayBeLocked || attempt === retries) throw e;
+      if (!mayBeLocked || attempt === retries) throw error;
       await sleep(500);
     }
   }
@@ -57,30 +57,23 @@ async function ensureRemovableDir(dirPath, retries = 10) {
 
   if (isProcessRunning(exeName)) {
     if (shouldKill) {
-      // eslint-disable-next-line no-console
-      console.log(`[prep] 检测到正在运行的进程: ${exeName}，正在结束...`);
+      console.log(`[prep] Detected running process: ${exeName}. Stopping it before packaging.`);
       killProcess(exeName);
       await sleep(500);
     } else {
-      // eslint-disable-next-line no-console
-      console.error(`❌ 桌面打包失败前置检查：检测到 ${exeName} 正在运行。`);
-      // eslint-disable-next-line no-console
-      console.error('   请先关闭正在运行的桌面程序（尤其是从 release/win-unpacked 运行的版本），再执行 `npm run desktop:build`。');
-      // eslint-disable-next-line no-console
-      console.error('   或使用 `npm run desktop:build:kill` 自动结束进程。');
+      console.error(`Desktop build blocked: detected running process ${exeName}.`);
+      console.error('Close the running desktop app, especially anything started from release/win-unpacked, then rerun `npm run desktop:build`.');
+      console.error('Or use `npm run desktop:build:kill` to stop the process automatically.');
       process.exit(1);
     }
   }
 
   try {
     await ensureRemovableDir(unpackedDir, 15);
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error(`❌ 无法清理输出目录（可能被占用/权限不足）：${unpackedDir}`);
-    // eslint-disable-next-line no-console
-    console.error(`   具体错误: ${String(e?.message || e)}`);
-    // eslint-disable-next-line no-console
-    console.error('   处理建议：关闭 Northrealm、关闭打开了 win-unpacked 的资源管理器窗口/预览、或重启后再打包。');
+  } catch (error) {
+    console.error(`Failed to clean output directory: ${unpackedDir}`);
+    console.error(`Error: ${String(error?.message || error)}`);
+    console.error('Close Northrealm and any Explorer window opened inside win-unpacked, then retry the build.');
     process.exit(1);
   }
 })();

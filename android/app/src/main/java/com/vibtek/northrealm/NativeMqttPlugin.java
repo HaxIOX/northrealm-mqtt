@@ -1,23 +1,12 @@
 package com.vibtek.northrealm;
 
-import android.Manifest;
-import android.content.ContentValues;
-import android.content.pm.PackageManager;
-import android.net.Uri;
-import android.os.Build;
-import android.os.Environment;
-import android.provider.MediaStore;
-import androidx.core.content.ContextCompat;
-
 import com.getcapacitor.JSObject;
-import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import com.getcapacitor.annotation.Permission;
-import com.getcapacitor.annotation.PermissionCallback;
-
+import java.nio.charset.StandardCharsets;
+import org.eclipse.paho.client.mqttv3.DisconnectedBufferOptions;
 import org.eclipse.paho.client.mqttv3.IMqttActionListener;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.IMqttToken;
@@ -28,475 +17,183 @@ import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.UUID;
-
-import android.util.Base64;
-
-@CapacitorPlugin(
-  name = "NativeMqtt",
-  permissions = {
-    // Only used on API < 29 for legacy Downloads write.
-    @Permission(strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE }, alias = "storage")
-  }
-)
+@CapacitorPlugin(name = "NativeMqtt")
 public class NativeMqttPlugin extends Plugin {
+    private final Object lock = new Object();
+    private MqttAsyncClient client;
+    private boolean manualDisconnect;
 
-  private final Object lock = new Object();
-  private MqttAsyncClient client;
-  private boolean manualDisconnect = false;
-  private int reconnectCount = 0;
-
-  private void emitError(String message, Throwable t) {
-    JSObject obj = new JSObject();
-    String msg = message != null ? message : "Native MQTT error";
-    if (t != null && t.getMessage() != null && !t.getMessage().isEmpty() && !msg.contains(t.getMessage())) {
-      msg = msg + ": " + t.getMessage();
+    private static String normalizeServerUri(String url) {
+        if (url.startsWith("mqtt://")) return "tcp://" + url.substring(7);
+        if (url.startsWith("mqtts://")) return "ssl://" + url.substring(8);
+        return url;
     }
-    obj.put("message", msg);
-    if (t != null) {
-      obj.put("exception", t.getClass().getName());
-      obj.put("details", String.valueOf(t));
-      if (t instanceof MqttException) {
-        try {
-          int reasonCode = ((MqttException) t).getReasonCode();
-          obj.put("reasonCode", reasonCode);
-          // Keep compatibility with JS error parsing that expects err.code sometimes.
-          obj.put("code", reasonCode);
-        } catch (Exception ignored) {
-          // ignore
+
+    private void emit(String eventName, JSObject data) {
+        notifyListeners(eventName, data == null ? new JSObject() : data, true);
+    }
+
+    private void emitError(String message, Throwable error) {
+        JSObject data = new JSObject();
+        data.put("message", message);
+        if (error != null) {
+            data.put("exception", error.getClass().getSimpleName());
+            data.put("details", error.getMessage());
+            if (error instanceof MqttException) data.put("code", ((MqttException) error).getReasonCode());
         }
-      }
-    }
-    notifyListeners("error", obj);
-  }
-
-  private static String normalizeServerUri(String url) {
-    if (url == null) return "";
-    String u = url.trim();
-    if (u.startsWith("mqtts://")) return "ssl://" + u.substring("mqtts://".length());
-    if (u.startsWith("mqtt://")) return "tcp://" + u.substring("mqtt://".length());
-    // Allow power users to pass tcp:// or ssl:// directly.
-    return u;
-  }
-
-  @PluginMethod
-  public void connect(PluginCall call) {
-    String url = call.getString("url");
-    if (url == null || url.trim().isEmpty()) {
-      call.reject("url is required");
-      return;
+        emit("error", data);
     }
 
-    String serverUri = normalizeServerUri(url);
-    String clientId = call.getString("clientId");
-    if (clientId == null || clientId.trim().isEmpty()) {
-      clientId = "nr_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-    }
-
-    String username = call.getString("username", "");
-    String password = call.getString("password", "");
-    boolean clean = Boolean.TRUE.equals(call.getBoolean("clean", true));
-    int keepalive = call.getInt("keepalive", 60);
-    int connectTimeoutMs = call.getInt("connectTimeoutMs", 10_000);
-    int reconnectPeriodMs = call.getInt("reconnectPeriodMs", 0);
-
-    final String resolvedClientId = clientId;
-    final String resolvedServerUri = serverUri;
-
-    final MqttAsyncClient nextClient;
-    try {
-      nextClient = new MqttAsyncClient(resolvedServerUri, resolvedClientId, new MemoryPersistence());
-    } catch (MqttException e) {
-      call.reject("create client failed: " + e.getMessage());
-      return;
-    }
-
-    final MqttConnectOptions opts = new MqttConnectOptions();
-    opts.setCleanSession(clean);
-    opts.setKeepAliveInterval(Math.max(0, keepalive));
-    opts.setConnectionTimeout(Math.max(1, connectTimeoutMs / 1000));
-    // Enforce MQTT 3.1.1 (v4) to match UI setting and avoid broker-side version mismatch.
-    opts.setMqttVersion(MqttConnectOptions.MQTT_VERSION_3_1_1);
-    opts.setAutomaticReconnect(reconnectPeriodMs > 0);
-    if (username != null && !username.isEmpty()) opts.setUserName(username);
-    if (password != null && !password.isEmpty()) opts.setPassword(password.toCharArray());
-
-    nextClient.setCallback(new MqttCallbackExtended() {
-      @Override
-      public void connectComplete(boolean reconnect, String serverURI) {
-        synchronized (lock) {
-          manualDisconnect = false;
-          if (reconnect) reconnectCount++;
-        }
-
-        JSObject ev = new JSObject();
-        ev.put("reconnect", reconnect);
-        ev.put("serverURI", serverURI);
-        notifyListeners("connect", ev);
-        if (reconnect) {
-          JSObject r = new JSObject();
-          r.put("count", reconnectCount);
-          notifyListeners("reconnect", r);
-        }
-      }
-
-      @Override
-      public void connectionLost(Throwable cause) {
-        boolean manual;
-        synchronized (lock) {
-          manual = manualDisconnect;
-        }
-
-        if (manual) {
-          // Manual disconnect/replace: end() already emits "close".
-          // Also avoid emitting "close" for stale clients during a reconnect/replace sequence.
-          return;
-        }
-
-        JSObject ev = new JSObject();
-        ev.put("message", cause != null ? String.valueOf(cause.getMessage()) : "connection lost");
-        notifyListeners("offline", ev);
-        emitError(ev.getString("message"), cause);
-      }
-
-      @Override
-      public void messageArrived(String topic, MqttMessage message) {
-        JSObject ev = new JSObject();
-        ev.put("topic", topic != null ? topic : "");
-        byte[] raw = message != null ? message.getPayload() : null;
-        if (raw == null) raw = new byte[0];
-        String payload = new String(raw, StandardCharsets.UTF_8);
-        ev.put("payload", payload);
-        // Only include Base64 when payload looks non-UTF8 or empty but has raw bytes,
-        // to keep events small and reduce per-message CPU overhead.
-        if ((payload.isEmpty() && raw.length > 0) || payload.indexOf('\uFFFD') >= 0) {
-          ev.put("payloadBase64", Base64.encodeToString(raw, Base64.NO_WRAP));
-        }
-        ev.put("qos", message.getQos());
-        ev.put("retain", message.isRetained());
-        ev.put("dup", message.isDuplicate());
-        notifyListeners("message", ev);
-      }
-
-      @Override
-      public void deliveryComplete(IMqttDeliveryToken token) {
-        // no-op: App already logs publish by callback.
-      }
-    });
-
-    // Replace old connection (single-session; UI only uses one client).
-    synchronized (lock) {
-      manualDisconnect = true;
-      reconnectCount = 0;
-      if (client != null) {
-        try {
-          if (client.isConnected()) client.disconnectForcibly();
-          client.close();
-        } catch (Exception ignored) {
-          // ignore
-        }
-      }
-      client = nextClient;
-    }
-
-    try {
-      nextClient.connect(opts, null, new IMqttActionListener() {
-        @Override
-        public void onSuccess(IMqttToken asyncActionToken) {
-          JSObject res = new JSObject();
-          res.put("clientId", resolvedClientId);
-          res.put("serverURI", resolvedServerUri);
-          call.resolve(res);
-        }
-
-        @Override
-        public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-          emitError("connect failed", exception);
-          call.reject("connect failed: " + (exception != null ? exception.getMessage() : "unknown"));
-        }
-      });
-    } catch (MqttException e) {
-      emitError("connect threw", e);
-      call.reject("connect error: " + e.getMessage());
-    }
-  }
-
-  @PluginMethod
-  public void subscribe(PluginCall call) {
-    String topic = call.getString("topic");
-    if (topic == null || topic.trim().isEmpty()) {
-      call.reject("topic is required");
-      return;
-    }
-    int qos = call.getInt("qos", 0);
-    qos = Math.max(0, Math.min(2, qos));
-    MqttAsyncClient c;
-    synchronized (lock) {
-      c = client;
-    }
-    if (c == null || !c.isConnected()) {
-      call.reject("not connected");
-      return;
-    }
-
-    try {
-      c.subscribe(topic, qos, null, new IMqttActionListener() {
-        @Override
-        public void onSuccess(IMqttToken asyncActionToken) {
-          call.resolve();
-        }
-
-        @Override
-        public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-          call.reject("subscribe failed: " + (exception != null ? exception.getMessage() : "unknown"));
-        }
-      });
-    } catch (MqttException e) {
-      call.reject("subscribe error: " + e.getMessage());
-    }
-  }
-
-  @PluginMethod
-  public void unsubscribe(PluginCall call) {
-    String topic = call.getString("topic");
-    if (topic == null || topic.trim().isEmpty()) {
-      call.reject("topic is required");
-      return;
-    }
-    MqttAsyncClient c;
-    synchronized (lock) {
-      c = client;
-    }
-    if (c == null || !c.isConnected()) {
-      call.reject("not connected");
-      return;
-    }
-
-    try {
-      c.unsubscribe(topic, null, new IMqttActionListener() {
-        @Override
-        public void onSuccess(IMqttToken asyncActionToken) {
-          call.resolve();
-        }
-
-        @Override
-        public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-          call.reject("unsubscribe failed: " + (exception != null ? exception.getMessage() : "unknown"));
-        }
-      });
-    } catch (MqttException e) {
-      call.reject("unsubscribe error: " + e.getMessage());
-    }
-  }
-
-  @PluginMethod
-  public void publish(PluginCall call) {
-    String topic = call.getString("topic");
-    if (topic == null || topic.trim().isEmpty()) {
-      call.reject("topic is required");
-      return;
-    }
-    String payload = call.getString("payload", "");
-    int qos = call.getInt("qos", 0);
-    qos = Math.max(0, Math.min(2, qos));
-    boolean retain = Boolean.TRUE.equals(call.getBoolean("retain", false));
-
-    MqttAsyncClient c;
-    synchronized (lock) {
-      c = client;
-    }
-    if (c == null || !c.isConnected()) {
-      call.reject("not connected");
-      return;
-    }
-
-    MqttMessage msg = new MqttMessage(payload != null ? payload.getBytes(StandardCharsets.UTF_8) : new byte[0]);
-    msg.setQos(qos);
-    msg.setRetained(retain);
-
-    try {
-      c.publish(topic, msg, null, new IMqttActionListener() {
-        @Override
-        public void onSuccess(IMqttToken asyncActionToken) {
-          call.resolve();
-        }
-
-        @Override
-        public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-          call.reject("publish failed: " + (exception != null ? exception.getMessage() : "unknown"));
-        }
-      });
-    } catch (MqttException e) {
-      call.reject("publish error: " + e.getMessage());
-    }
-  }
-
-  @PluginMethod
-  public void end(PluginCall call) {
-    boolean force = Boolean.TRUE.equals(call.getBoolean("force", true));
-    MqttAsyncClient c;
-    synchronized (lock) {
-      manualDisconnect = true;
-      c = client;
-      client = null;
-    }
-
-    if (c == null) {
-      JSObject ev = new JSObject();
-      notifyListeners("close", ev);
-      call.resolve();
-      return;
-    }
-
-    if (force) {
-      try {
-        c.disconnectForcibly();
-      } catch (Exception ignored) {
-        // ignore
-      }
-      try {
-        c.close();
-      } catch (Exception ignored) {
-        // ignore
-      }
-      JSObject ev = new JSObject();
-      notifyListeners("close", ev);
-      call.resolve();
-      return;
-    }
-
-    try {
-      c.disconnect(null, new IMqttActionListener() {
-        @Override
-        public void onSuccess(IMqttToken asyncActionToken) {
-          try {
-            c.close();
-          } catch (Exception ignored) {
-            // ignore
-          }
-          JSObject ev = new JSObject();
-          notifyListeners("close", ev);
-          call.resolve();
-        }
-
-        @Override
-        public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-          try {
-            c.disconnectForcibly();
-          } catch (Exception ignored) {
-            // ignore
-          }
-          try {
-            c.close();
-          } catch (Exception ignored) {
-            // ignore
-          }
-          JSObject ev = new JSObject();
-          notifyListeners("close", ev);
-          call.resolve();
-        }
-      });
-    } catch (MqttException e) {
-      try {
-        c.disconnectForcibly();
-      } catch (Exception ignored) {
-        // ignore
-      }
-      try {
-        c.close();
-      } catch (Exception ignored) {
-        // ignore
-      }
-      JSObject ev = new JSObject();
-      notifyListeners("close", ev);
-      call.resolve();
-    }
-  }
-
-  /**
-   * Save a small text file into the public Downloads folder so users can find exported backups/logs.
-   * Uses MediaStore (Android Q+) and works without legacy storage permissions on modern Android.
-   */
-  @PluginMethod
-  public void saveTextToDownloads(PluginCall call) {
-    String filename = call.getString("filename");
-    String text = call.getString("text", "");
-    String mime = call.getString("mime", "application/json");
-
-    if (filename == null || filename.trim().isEmpty()) {
-      call.reject("filename is required");
-      return;
-    }
-
-    byte[] bytes = (text != null ? text : "").getBytes(StandardCharsets.UTF_8);
-
-    try {
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        // Android Q+: use MediaStore API (no permissions needed).
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
-        values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
-        values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
-
-        Uri collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
-        Uri item = getContext().getContentResolver().insert(collection, values);
-        if (item == null) {
-          call.reject("failed to create download entry");
-          return;
-        }
-
-        try (OutputStream os = getContext().getContentResolver().openOutputStream(item)) {
-          if (os == null) {
-            call.reject("open output stream failed");
+    @PluginMethod
+    public void connect(PluginCall call) {
+        String url = call.getString("url", "");
+        String clientId = call.getString("clientId", "");
+        if (url.isEmpty() || clientId.isEmpty()) {
+            call.reject("url and clientId are required");
             return;
-          }
-          os.write(bytes);
-          os.flush();
         }
 
-        ContentValues done = new ContentValues();
-        done.put(MediaStore.MediaColumns.IS_PENDING, 0);
-        getContext().getContentResolver().update(item, done, null, null);
+        try {
+            synchronized (lock) {
+                if (client != null) {
+                    try { client.disconnectForcibly(0, 0); } catch (Exception ignored) {}
+                    try { client.close(); } catch (Exception ignored) {}
+                }
+                manualDisconnect = false;
+                client = new MqttAsyncClient(normalizeServerUri(url), clientId, new MemoryPersistence());
+                client.setCallback(new MqttCallbackExtended() {
+                    @Override
+                    public void connectComplete(boolean reconnect, String serverURI) {
+                        JSObject event = new JSObject();
+                        event.put("sessionPresent", false);
+                        event.put("reconnect", reconnect);
+                        emit("connect", event);
+                    }
 
-        JSObject res = new JSObject();
-        res.put("uri", item.toString());
-        call.resolve(res);
-      } else {
-        // API 24-28: requires legacy storage permission on Android 6-9.
-        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-          requestPermissionForAlias("storage", call, "saveTextToDownloadsPermsCallback");
-          return;
-        }
-        // API 24-28: write directly to the public Downloads directory.
-        @SuppressWarnings("deprecation")
-        File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-        if (!dir.exists()) dir.mkdirs();
-        File file = new File(dir, filename);
-        try (FileOutputStream fos = new FileOutputStream(file)) {
-          fos.write(bytes);
-          fos.flush();
-        }
+                    @Override
+                    public void connectionLost(Throwable cause) {
+                        if (manualDisconnect) return;
+                        emit("offline", new JSObject());
+                        emit("reconnect", new JSObject());
+                        emitError("MQTT connection lost", cause);
+                    }
 
-        JSObject res = new JSObject();
-        res.put("uri", Uri.fromFile(file).toString());
-        call.resolve(res);
-      }
-    } catch (Exception e) {
-      call.reject("save failed: " + e.getMessage());
+                    @Override
+                    public void messageArrived(String topic, MqttMessage message) {
+                        JSObject event = new JSObject();
+                        event.put("topic", topic);
+                        event.put("payload", new String(message.getPayload(), StandardCharsets.UTF_8));
+                        event.put("qos", message.getQos());
+                        event.put("retain", message.isRetained());
+                        event.put("dup", message.isDuplicate());
+                        emit("message", event);
+                    }
+
+                    @Override
+                    public void deliveryComplete(IMqttDeliveryToken token) {}
+                });
+
+                MqttConnectOptions options = new MqttConnectOptions();
+                options.setCleanSession(call.getBoolean("clean", true));
+                options.setKeepAliveInterval(call.getInt("keepalive", 60));
+                options.setConnectionTimeout(Math.max(1, call.getInt("connectTimeoutMs", 10000) / 1000));
+                options.setAutomaticReconnect(call.getInt("reconnectPeriodMs", 0) > 0);
+                String username = call.getString("username", "");
+                String password = call.getString("password", "");
+                if (!username.isEmpty()) options.setUserName(username);
+                if (!password.isEmpty()) options.setPassword(password.toCharArray());
+
+                DisconnectedBufferOptions buffer = new DisconnectedBufferOptions();
+                buffer.setBufferEnabled(true);
+                buffer.setBufferSize(100);
+                buffer.setPersistBuffer(false);
+                buffer.setDeleteOldestMessages(true);
+                client.setBufferOpts(buffer);
+                client.connect(options, null, new IMqttActionListener() {
+                    @Override
+                    public void onSuccess(IMqttToken asyncActionToken) { call.resolve(); }
+
+                    @Override
+                    public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
+                        emitError("MQTT connection failed", exception);
+                        Exception cause = exception instanceof Exception
+                            ? (Exception) exception
+                            : new Exception(exception);
+                        call.reject("MQTT connection failed", cause);
+                    }
+                });
+            }
+        } catch (Exception error) {
+            emitError("MQTT initialization failed", error);
+            call.reject("MQTT initialization failed", error);
+        }
     }
-  }
 
-  @PermissionCallback
-  private void saveTextToDownloadsPermsCallback(PluginCall call) {
-    if (getPermissionState("storage") != PermissionState.GRANTED) {
-      call.reject("storage permission denied");
-      return;
+    @PluginMethod
+    public void subscribe(PluginCall call) {
+        MqttAsyncClient current = client;
+        if (current == null || !current.isConnected()) {
+            call.reject("MQTT client is not connected");
+            return;
+        }
+        try {
+            current.subscribe(call.getString("topic", ""), call.getInt("qos", 0)).waitForCompletion();
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("Subscribe failed", error);
+        }
     }
-    saveTextToDownloads(call);
-  }
+
+    @PluginMethod
+    public void unsubscribe(PluginCall call) {
+        MqttAsyncClient current = client;
+        if (current == null || !current.isConnected()) {
+            call.reject("MQTT client is not connected");
+            return;
+        }
+        try {
+            current.unsubscribe(call.getString("topic", "")).waitForCompletion();
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("Unsubscribe failed", error);
+        }
+    }
+
+    @PluginMethod
+    public void publish(PluginCall call) {
+        MqttAsyncClient current = client;
+        if (current == null || !current.isConnected()) {
+            call.reject("MQTT client is not connected");
+            return;
+        }
+        try {
+            MqttMessage message = new MqttMessage(call.getString("payload", "").getBytes(StandardCharsets.UTF_8));
+            message.setQos(call.getInt("qos", 0));
+            message.setRetained(call.getBoolean("retain", false));
+            current.publish(call.getString("topic", ""), message).waitForCompletion();
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("Publish failed", error);
+        }
+    }
+
+    @PluginMethod
+    public void end(PluginCall call) {
+        MqttAsyncClient current;
+        synchronized (lock) {
+            manualDisconnect = true;
+            current = client;
+            client = null;
+        }
+        try {
+            if (current != null) {
+                if (current.isConnected()) current.disconnectForcibly(0, 0);
+                current.close();
+            }
+            emit("close", new JSObject());
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("Disconnect failed", error);
+        }
+    }
 }

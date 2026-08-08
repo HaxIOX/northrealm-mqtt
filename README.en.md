@@ -1,6 +1,6 @@
-# Northrealm (北境) · MQTT Debugger / MQTT Client
+# Northrealm MQTT
 
-This file mirrors `README.md` (default English).
+This file mirrors [README.md](README.md).
 
 [![Release](https://img.shields.io/github/v/release/HaxIOX/northrealm-mqtt?sort=semver)](https://github.com/HaxIOX/northrealm-mqtt/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/HaxIOX/northrealm-mqtt/ci.yml?branch=main)](https://github.com/HaxIOX/northrealm-mqtt/actions/workflows/ci.yml)
@@ -13,66 +13,63 @@ This file mirrors `README.md` (default English).
 
 Short name: `NR`.
 
-An MQTT tool for IoT development/testing: **Web (browser) + Windows Desktop (Electron)**. Connect, subscribe, publish, inspect logs, filter by topic, and schedule publishes.
+Northrealm is an MQTT debugger and client for IoT development and testing. It provides:
 
-## Highlights
-
-- Backup import/export: export configs with one click (optional “export with passwords” — **plaintext**, handle carefully)
-- Quick actions: save common publishes and send in one click (no more repetitive copy/paste)
-- Web + Windows: Web uses `ws/wss`; Desktop additionally supports `mqtt/mqtts` (1883/8883)
+- Web mode for `ws://` and `wss://`
+- Windows desktop mode for `ws://`, `wss://`, `mqtt://`, and `mqtts://`
+- Connection profiles, subscriptions, publishing, live logs, quick actions, and scheduled publishing
 
 ## Features
 
-- Connection profiles, auto-reconnect, connection diagnostics
-- Local backup: one-click import/export (optional “export with passwords” in plaintext)
-- Subscribe/publish: QoS 0/1/2, Retain, wildcards `#` / `+`
-- Topic filter: click subscription topics in the left panel to multi-select filters; message logs only show topics that match (supports `#` / `+`), and can be cleared with one click
-- Scheduled publish: repeatedly publish the current message to the target topic at the configured interval until stopped
-- Live logs, TEXT/HEX view
-- Quick actions: save common publishes and send with one click
+- Connection profiles with auto-reconnect and diagnostics
+- Subscribe and publish with QoS `0/1/2` and `Retain`
+- Topic filtering with wildcard support (`#` and `+`)
+- Quick actions for common publish payloads
+- Local backup import/export
+- Desktop TCP/TLS MQTT support through Electron preload
 
-## Protocol support (Web vs Desktop)
+## Protocol support
 
-- ☑ MQTT protocol versions: 3.1 / 3.1.1 / 5.0
-- ☑ WebSocket: `ws://` / `wss://` (Web & Desktop)
-- ☑ TCP: `mqtt://` / `mqtts://` (Desktop only)
+- MQTT protocol versions: `3.1`, `3.1.1`, `5.0`
+- Web: `ws://`, `wss://`
+- Desktop: `ws://`, `wss://`, `mqtt://`, `mqtts://`
 
-Notes:
-
-- Browsers can’t open raw TCP sockets, so the Web build only supports `ws/wss`.
+Browsers cannot open raw TCP sockets, so the web build supports WebSocket transport only.
 
 ## Preview
 
 ![image-20251227203752551](assets/image-20251227203752551.png)
-
 ![image-20251227203803561](assets/image-20251227203803561.png)
-
 ![image-20251227203820626](assets/image-20251227203820626.png)
 
 ## Requirements
 
-- Node.js: `^20.19.0 || >=22.12.0` (required by Vite 7)
+- Node.js: `^20.19.0 || >=22.12.0`
 
 ## Quick start
-
-- Web: [nrmqtt.haxio.de](https://nrmqtt.haxio.de/)
-- Download portable Windows client: [Release v0.1.3](https://github.com/HaxIOX/northrealm-mqtt/releases/tag/v0.1.3)
 
 ```bash
 npm ci
 npm run dev
 ```
 
-### If install fails (Electron download timeout)
+## Recommended verification
 
-If you see `connect ETIMEDOUT ...:443`, it’s usually a **network timeout while downloading Electron binaries**, not a wrong command.
+Use one verification path consistently:
 
-On Windows CMD, set mirrors and retry:
+```bash
+# Lint + web build
+npm run verify
 
-```bat
-set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
-set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
-npm ci
+# Lint + web build + Windows desktop packaging
+npm run verify:desktop
+```
+
+On Windows PowerShell, if `npm.ps1` is blocked by execution policy, run the same commands with `npm.cmd`:
+
+```powershell
+npm.cmd run verify
+npm.cmd run verify:desktop
 ```
 
 ## Desktop (Windows)
@@ -81,26 +78,34 @@ npm ci
 # Run Vite + Electron together
 npm run desktop:dev
 
-# Build installer (outputs to release/)
+# Build installer to release/
 npm run desktop:build
-```
 
-Portable zip:
+# Stop a running packaged app before build
+npm run desktop:build:kill
 
-```bash
+# Build portable zip
 npm run desktop:portable
 ```
 
-## Release assets (Windows)
+If dependency installation fails while downloading Electron, set mirrors in Windows CMD and retry:
+
+```bat
+set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
+npm ci
+```
+
+## Release assets
 
 - Installer: `Northrealm Setup <version>.exe`
 - Portable: `Northrealm-portable-<version>-win-x64.zip`
 
-## Git / Packaging / Actions doc
+## Workflow doc
 
 See: `docs/GIT_WORKFLOW.md`
 
 ## License
 
-- Source code is licensed under **GNU AGPL v3** (`AGPL-3.0-only`), see `LICENSE`
-- Project name and logo are not covered by the license, see `TRADEMARK.md`
+- Source code: **GNU AGPL v3** (`AGPL-3.0-only`), see [LICENSE](LICENSE)
+- Project name and logo: see [TRADEMARK.md](TRADEMARK.md)
