@@ -1,4 +1,3 @@
-/* eslint-disable global-require */
 
 console.log('[Preload] 开始加载 preload 脚本');
 console.log('[Preload] Node 版本:', process.versions.node);
@@ -33,7 +32,6 @@ if (!canRequire) {
   globalThis.__MQTT_PRO_MQTT_SOURCE__ = 'missing';
   console.warn('[Preload] ⚠️', msg);
   console.log('[Preload] ✅ preload 脚本加载完成（受限模式）');
-  // eslint-disable-next-line no-useless-return
   return;
 }
 

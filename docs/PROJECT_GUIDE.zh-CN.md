@@ -15,7 +15,7 @@ Northrealm（NR）是一个 MQTT 调试器 / 客户端：
 
 - `index.html`：应用入口 HTML
 - `src/main.jsx`：React 渲染入口，直接挂载 `App`
-- `src/App.jsx`：主应用（当前几乎所有业务/UI 都在这里）
+- `src/app/App.jsx`：主应用组合入口（当前负责 Provider 组装和页面壳层）
 - `src/mqtt/runtime.js`：运行时探测（是否 Electron/是否 preload 注入成功）
 - `src/mqtt/e2ee.js`：云同步可选加密（PBKDF2 + AES-GCM 的 envelope）
 - `electron/main.cjs`：Electron 主进程，创建窗口并加载页面
@@ -39,7 +39,7 @@ Northrealm（NR）是一个 MQTT 调试器 / 客户端：
 
 ## 4. 关键全局字段（用于诊断 Desktop 能力）
 
-preload 与 main 进程会向 `window` 注入一些诊断字段，前端会读取并输出到日志（见 `src/App.jsx` 中的“诊断”相关日志输出）。
+preload 与 main 进程会向 `window` 注入一些诊断字段，前端会读取并输出到日志（见 `src/app/App.jsx` 中的相关初始化逻辑）。
 
 常见字段（名字以 `__MQTT_PRO_` 开头）：
 
@@ -53,7 +53,7 @@ preload 与 main 进程会向 `window` 注入一些诊断字段，前端会读�
 
 ### 5.1 连接与协议能力选择
 
-在 `src/App.jsx` 的初始化逻辑中，会优先检测：
+在 `src/app/App.jsx` 的初始化逻辑中，会优先检测：
 
 1) 桌面端是否已由 preload 注入 `window.mqtt`（native，支持 TCP）
 2) 否则动态 `import('mqtt')`（bundled，浏览器版，通常只支持 ws/wss）
@@ -62,7 +62,7 @@ preload 与 main 进程会向 `window` 注入一些诊断字段，前端会读�
 
 ```mermaid
 flowchart LR
-  UI[UI: 点击连接/订阅/发布] --> App[React: src/App.jsx]
+  UI[UI: 点击连接/订阅/发布] --> App[React: src/app/App.jsx]
   App -->|connect(url, opts)| MqttClient[mqtt client instance]
   MqttClient -->|on connect| App
   MqttClient -->|on message(topic,payload)| App
@@ -79,7 +79,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  UI[选择同步空间/输入口令] --> App[React: src/App.jsx]
+  UI[选择同步空间/输入口令] --> App[React: src/app/App.jsx]
   App -->|onSnapshot| Firestore[(Firestore Doc)]
   App -->|setDoc| Firestore
   App -->|encryptJson/decryptJson| E2EE[src/mqtt/e2ee.js]
@@ -115,7 +115,7 @@ flowchart LR
 3) `electron/main.cjs`：了解 Desktop 是怎么加载前端页面的
 4) `electron/preload.cjs`：了解 `window.mqtt` 与诊断字段从哪来
 5) `src/mqtt/e2ee.js`：了解云同步加密 envelope 的结构
-6) 最后再看 `src/App.jsx`：
+6) 最后再看 `src/app/App.jsx`：
    - 先找“初始化（加载 mqtt / 读 localStorage / Firebase 初始化）”
    - 再找“连接/订阅/发布/消息回调”
    - 再看“日志过滤与 UI 渲染”
@@ -123,4 +123,3 @@ flowchart LR
 ## 8. 你可能立刻遇到的阅读障碍（已知问题）
 
 当前仓库里有多处中文显示为乱码（注释/字符串/README）。这通常是文件编码不一致导致的；在进入深入阅读/重构前，建议先统一为 UTF-8（无 BOM），否则搜索与理解会持续被干扰。
-

@@ -1,6 +1,6 @@
-// MQTT 连接测试脚本（请勿提交真实账号密码到公开仓库）
+// MQTT connection smoke test.
 //
-// 用法（PowerShell）：
+// PowerShell example:
 //   $env:MQTT_HOST='broker.emqx.io'
 //   $env:MQTT_PORT='1883'
 //   $env:MQTT_USERNAME=''
@@ -10,7 +10,7 @@
 const mqtt = require('mqtt');
 
 console.log('========================================');
-console.log('MQTT 连接测试');
+console.log('MQTT connection smoke test');
 console.log('========================================\n');
 
 const HOST = process.env.MQTT_HOST || 'broker.emqx.io';
@@ -20,7 +20,7 @@ const PASSWORD = process.env.MQTT_PASSWORD || '';
 
 const configs = [
   {
-    name: '测试1: 用户名密码 + MQTT 3.1.1',
+    name: 'Test 1: username/password + MQTT 3.1.1',
     options: {
       host: HOST,
       port: PORT,
@@ -36,7 +36,7 @@ const configs = [
     },
   },
   {
-    name: '测试2: 无用户名密码 + MQTT 3.1.1',
+    name: 'Test 2: anonymous + MQTT 3.1.1',
     options: {
       host: HOST,
       port: PORT,
@@ -50,7 +50,7 @@ const configs = [
     },
   },
   {
-    name: '测试3: 用户名密码 + MQTT 3.1',
+    name: 'Test 3: username/password + MQTT 3.1',
     options: {
       host: HOST,
       port: PORT,
@@ -71,12 +71,12 @@ function testConnection(config) {
   return new Promise((resolve) => {
     console.log(`\n${config.name}`);
     console.log(
-      '配置:',
+      'Config:',
       JSON.stringify(
         {
           host: config.options.host,
           port: config.options.port,
-          username: config.options.username || '(无)',
+          username: config.options.username || '(none)',
           clientId: config.options.clientId,
           protocolId: config.options.protocolId,
           protocolVersion: config.options.protocolVersion,
@@ -85,33 +85,33 @@ function testConnection(config) {
         2,
       ),
     );
-    console.log('\n正在连接...');
+    console.log('\nConnecting...');
 
     const client = mqtt.connect(config.options);
     const timeout = setTimeout(() => {
-      console.log('❌ 连接超时');
+      console.log('Timeout');
       client.end(true);
       resolve();
     }, 12000);
 
     client.on('connect', (connack) => {
       clearTimeout(timeout);
-      console.log('✅ 连接成功');
+      console.log('Connected');
       console.log('CONNACK:', JSON.stringify(connack, null, 2));
       client.end();
       resolve();
     });
 
-    client.on('error', (err) => {
+    client.on('error', (error) => {
       clearTimeout(timeout);
-      console.log('❌ 错误:', err.message);
+      console.log('Error:', error.message);
       console.log(
-        '错误详情:',
+        'Details:',
         JSON.stringify(
           {
-            code: err.code,
-            errno: err.errno,
-            syscall: err.syscall,
+            code: error.code,
+            errno: error.errno,
+            syscall: error.syscall,
           },
           null,
           2,
@@ -122,31 +122,28 @@ function testConnection(config) {
     });
 
     client.on('close', () => {
-      console.log('⚠️  连接已关闭');
+      console.log('Connection closed');
     });
 
     client.on('offline', () => {
-      console.log('📴 客户端离线');
+      console.log('Client offline');
     });
 
     client.on('end', () => {
-      console.log('🔌 连接结束');
+      console.log('Connection ended');
     });
   });
 }
 
 async function runTests() {
   for (const config of configs) {
-    // eslint-disable-next-line no-await-in-loop
     await testConnection(config);
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
   console.log('\n========================================');
-  console.log('所有测试完成');
+  console.log('All tests finished');
   console.log('========================================');
 }
 
 runTests().catch(console.error);
-

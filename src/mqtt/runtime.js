@@ -9,12 +9,17 @@ export function detectRuntime() {
   const mqttSource = hasWindow ? window.__MQTT_PRO_MQTT_SOURCE__ : undefined;
 
   const isDesktopShell = hasWindow && (hasPreload || hasMainInfo || isElectronUserAgent);
+  const isNativeMobile = hasWindow
+    && !!window.Capacitor
+    && typeof window.Capacitor.isNativePlatform === 'function'
+    && window.Capacitor.isNativePlatform() === true;
 
   return {
     isElectronUserAgent,
     hasPreload,
     hasMainInfo,
     isDesktopShell,
+    isNativeMobile,
     mqttSource,
   };
 }
@@ -32,3 +37,14 @@ export function isDesktopTcpCapable() {
   );
 }
 
+export function isTcpCapable() {
+  if (typeof window === 'undefined') return false;
+  const { isNativeMobile } = detectRuntime();
+  const sourceNow = window.__MQTT_PRO_MQTT_SOURCE__;
+
+  if (isNativeMobile && sourceNow === 'native-mobile') {
+    return typeof window.mqtt?.connect === 'function';
+  }
+
+  return isDesktopTcpCapable();
+}
