@@ -9,12 +9,10 @@ const androidDir = path.join(repoRoot, 'android');
 const repoSdk = path.join(repoRoot, 'tools', 'android-sdk');
 
 function log(message) {
-  // eslint-disable-next-line no-console
   console.log(`[android:apk] ${message}`);
 }
 
 function fail(message) {
-  // eslint-disable-next-line no-console
   console.error(`[android:apk] ${message}`);
   process.exit(1);
 }
@@ -225,14 +223,11 @@ function main() {
   const selected = checked.find((item) => item.ok);
 
   if (!selected) {
-    // eslint-disable-next-line no-console
     console.error('[android:apk] No usable JDK 17+ was found. Checked candidates:');
     if (checked.length === 0) {
-      // eslint-disable-next-line no-console
       console.error('  - no candidate JDK paths found');
     } else {
       for (const item of checked) {
-        // eslint-disable-next-line no-console
         console.error(`  - ${item.source}: ${item.home} -> ${item.problems.join(', ')}`);
       }
     }
@@ -262,4 +257,3 @@ function main() {
 }
 
 main();
-
