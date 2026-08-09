@@ -82,6 +82,7 @@ jobs:
         with:
           name: Northrealm Android v${{ steps.release_meta.outputs.version }}
           body_path: .github/release-notes/${{ github.ref_name }}.md
+          make_latest: true
           fail_on_unmatched_files: true
           files: release-android/*.apk
       - name: Update Android release metadata
