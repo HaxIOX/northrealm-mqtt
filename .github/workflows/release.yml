@@ -84,3 +84,11 @@ jobs:
           body_path: .github/release-notes/${{ github.ref_name }}.md
           fail_on_unmatched_files: true
           files: release-android/*.apk
+      - name: Update Android release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "$GITHUB_REF_NAME" \
+            --title "Northrealm Android v${{ steps.release_meta.outputs.version }}" \
+            --notes-file ".github/release-notes/${GITHUB_REF_NAME}.md" \
+            --latest
