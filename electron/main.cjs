@@ -77,6 +77,7 @@ if (!gotLock) {
     logMain('createWindow', { preloadPath, preloadExists: fs.existsSync(preloadPath) });
 
     const state = loadWindowState();
+    const winIcon = path.join(__dirname, '..', 'build', 'icon.png');
 
     mainWindow = new BrowserWindow({
       ...state,
@@ -85,6 +86,7 @@ if (!gotLock) {
       minWidth: 1000,
       minHeight: 650,
       autoHideMenuBar: true,
+      icon: fs.existsSync(winIcon) ? winIcon : undefined,
       webPreferences: {
         preload: preloadPath,
         nodeIntegration: false,
