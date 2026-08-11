@@ -273,15 +273,42 @@ export default function MqttDebugger() {
   const clientRef = useRef(null);
   useEffect(() => { clientRef.current = client; }, [client]);
 
-  // 主题状态
+  // 主题状态：无本地记忆时跟随系统主题
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem('mqtt_theme');
-    return saved || 'dark';
+    if (saved) return saved;
+    try {
+      if (typeof window !== 'undefined' && window.matchMedia) {
+        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+    } catch {
+      // ignore
+    }
+    return 'dark';
   });
+  const themeUserOverride = useRef((() => {
+    try { return !!localStorage.getItem('mqtt_theme'); } catch { return false; }
+  })());
+
+  // 系统主题变化时跟随，直到用户手动切换过主题
+  useEffect(() => {
+    try {
+      if (typeof window === 'undefined' || !window.matchMedia) return;
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      const handler = (e) => {
+        if (!themeUserOverride.current) setTheme(e.matches ? 'dark' : 'light');
+      };
+      mq.addEventListener('change', handler);
+      return () => mq.removeEventListener('change', handler);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // 主题切换
   const toggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
+    themeUserOverride.current = true;
     setTheme(newTheme);
     localStorage.setItem('mqtt_theme', newTheme);
   };

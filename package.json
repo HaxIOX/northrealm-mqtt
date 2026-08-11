@@ -41,7 +41,7 @@
   "build": {
     "appId": "com.vibtek.northrealm",
     "productName": "Northrealm",
-    "asar": false,
+    "asar": true,
     "electronDownload": {
       "mirror": "https://npmmirror.com/mirrors/electron/"
     },
@@ -57,12 +57,9 @@
     "win": {
       "target": [
         "nsis",
-        "portable"
+        "zip"
       ],
       "signAndEditExecutable": false
-    },
-    "portable": {
-      "artifactName": "${productName} Portable ${version}.${ext}"
     }
   },
   "keywords": [
