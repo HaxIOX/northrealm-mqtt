@@ -6,7 +6,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Segoe UI"', '"Microsoft YaHei"', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['Inter', '"Segoe UI"', '"Microsoft YaHei"', 'system-ui', '-apple-system', 'sans-serif'],
+        mono: ['"JetBrains Mono"', '"Cascadia Code"', 'Consolas', 'ui-monospace', 'monospace'],
       },
     },
   },

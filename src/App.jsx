@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { 
   getFirestore, doc, setDoc, onSnapshot 
 } from 'firebase/firestore';
 import {
-  Wifi, WifiOff, Send, Download, Trash2, Play, Square, Activity,
+  Send, Download, Trash2, Play, Square, Activity,
   Server, Settings, MessageSquare, Loader2, Save, Search,
   PauseCircle, PlayCircle, FileJson, X, ChevronDown, ChevronUp,
-  Clock, Copy, Plus, Binary, Cloud, Zap, Edit2, Check, Share2,
+  Copy, Plus, Binary, Cloud, Zap, Edit2, Check, Share2,
   AlertCircle, Layout, RefreshCw, Timer, BarChart3, Keyboard,
   FileText, Variable, RotateCcw, Info, ArrowUpRight, ArrowDownRight,
   Bell, LayoutDashboard, Sun, Moon, Star
@@ -53,6 +53,157 @@ try {
 } catch (error) {
   console.error("Firebase 初始化失败，降级为本地模式:", error);
 }
+
+// --- 日志展示辅助（模块级纯函数） ---
+const MAX_LOGS = 500;
+
+const toHex = (str) => { let h=''; for(let i=0;i<str.length;i++) h+=str.charCodeAt(i).toString(16).padStart(2,'0')+' '; return h.toUpperCase(); };
+const isJson = (str) => { try { JSON.parse(str); return true; } catch { return false; } };
+const tryFormatJson = (str) => { try { return JSON.stringify(JSON.parse(str), null, 2); } catch { return str; } };
+
+// 轻量 JSON tokenizer：切分为 {type,value} 序列，供语法着色使用
+function tokenizeJson(text) {
+  const tokens = [];
+  let i = 0;
+  const n = text.length;
+  const push = (type, value) => { if (value) tokens.push({ type, value }); };
+  while (i < n) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      let str = c;
+      while (j < n) {
+        const ch = text[j];
+        str += ch;
+        j++;
+        if (ch === '\\') { if (j < n) { str += text[j]; j++; } continue; }
+        if (ch === '"') break;
+      }
+      push('string', str);
+      i = j;
+    } else if (c === '{' || c === '}' || c === '[' || c === ']' || c === ':' || c === ',') {
+      push('punct', c);
+      i++;
+    } else if (/\s/.test(c)) {
+      let j = i;
+      while (j < n && /\s/.test(text[j])) j++;
+      push('whitespace', text.slice(i, j));
+      i = j;
+    } else {
+      const numMatch = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(i));
+      if (numMatch) { push('number', numMatch[0]); i += numMatch[0].length; continue; }
+      const wordMatch = /^[A-Za-z_][A-Za-z0-9_]*/.exec(text.slice(i));
+      if (wordMatch) {
+        const w = wordMatch[0];
+        if (w === 'true' || w === 'false') push('boolean', w);
+        else if (w === 'null') push('null', w);
+        else push('other', w);
+        i += w.length;
+        continue;
+      }
+      push('other', c);
+      i++;
+    }
+  }
+  // 字符串后（跳过空白）紧跟 ':' 视为键
+  for (let k = 0; k < tokens.length; k++) {
+    if (tokens[k].type !== 'string') continue;
+    let p = k + 1;
+    while (p < tokens.length && tokens[p].type === 'whitespace') p++;
+    if (p < tokens.length && tokens[p].type === 'punct' && tokens[p].value === ':') tokens[k].type = 'key';
+  }
+  return tokens;
+}
+
+function JsonHighlight({ text, theme }) {
+  const tokens = useMemo(() => tokenizeJson(text), [text]);
+  const cls = {
+    key: theme === 'light' ? 'text-blue-600' : 'text-blue-400',
+    string: theme === 'light' ? 'text-emerald-700' : 'text-emerald-400',
+    number: theme === 'light' ? 'text-amber-600' : 'text-amber-400',
+    boolean: theme === 'light' ? 'text-violet-600' : 'text-violet-400',
+    null: theme === 'light' ? 'text-violet-600' : 'text-violet-400',
+    other: theme === 'light' ? 'text-slate-600' : 'text-slate-300',
+    punct: theme === 'light' ? 'text-slate-500' : 'text-slate-400',
+    whitespace: '',
+  };
+  return tokens.map((tok, idx) => (
+    cls[tok.type] ? <span key={idx} className={cls[tok.type]}>{tok.value}</span> : tok.value
+  ));
+}
+
+const LogItem = React.memo(function LogItem({ log, theme, logViewMode, onEdit, onCopy }) {
+  const isSent = log.type === 'sent';
+  const isReceived = log.type === 'received';
+  const isSystem = log.type === 'system';
+  const isError = !isSent && !isReceived && !isSystem;
+  const tagLabel = isSent ? 'TX' : isReceived ? 'RX' : isError ? 'ERR' : 'SYS';
+
+  const lineCls = isSent
+    ? (theme === 'light' ? 'border-blue-400/40' : 'border-blue-500/40')
+    : isReceived
+      ? (theme === 'light' ? 'border-emerald-400/40' : 'border-emerald-500/40')
+      : isError
+        ? (theme === 'light' ? 'border-rose-400/40' : 'border-rose-500/40')
+        : (theme === 'light' ? 'border-slate-300/70' : 'border-slate-600/50');
+
+  const dotCls = isSent
+    ? (theme === 'light' ? 'bg-white border-blue-400' : 'bg-slate-900 border-blue-500')
+    : isReceived
+      ? (theme === 'light' ? 'bg-white border-emerald-400' : 'bg-slate-900 border-emerald-500')
+      : isError
+        ? (theme === 'light' ? 'bg-white border-rose-400' : 'bg-slate-900 border-rose-500')
+        : (theme === 'light' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500');
+
+  const tagCls = isSent
+    ? (theme === 'light' ? 'text-blue-600' : 'text-blue-400')
+    : isReceived
+      ? (theme === 'light' ? 'text-emerald-600' : 'text-emerald-400')
+      : isError
+        ? (theme === 'light' ? 'text-rose-600' : 'text-rose-400')
+        : (theme === 'light' ? 'text-slate-500' : 'text-slate-400');
+
+  const panelCls = theme === 'light' ? 'bg-white border-slate-200/70' : 'bg-slate-900/40 border-slate-700/40';
+  const mutedText = theme === 'light' ? 'text-slate-400' : 'text-slate-500';
+  const secondaryText = theme === 'light' ? 'text-slate-600' : 'text-slate-400';
+  const hoverBtn = theme === 'light' ? 'text-slate-400 hover:text-slate-700' : 'text-slate-500 hover:text-slate-200';
+
+  const showEdit = !!log.topic && typeof log.payload === 'string' && onEdit;
+
+  return (
+    <div className={`relative pl-4 border-l-2 ${lineCls} animate-in fade-in slide-in-from-bottom-2 duration-300 group`}>
+      <span className={`absolute -left-[5px] top-1.5 w-2 h-2 rounded-full border-2 ${dotCls} group-hover:scale-125 transition-transform`}></span>
+      <div className="pb-1">
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className={`text-[9px] font-bold tracking-wider ${tagCls}`}>{tagLabel}</span>
+          {log.topic && <span className={`text-xs font-semibold font-mono truncate ${secondaryText}`}>{log.topic}</span>}
+          <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {showEdit && (
+              <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(log); }} className={`p-1 ${hoverBtn} rounded transition-colors`} title="填充到发送区编辑">
+                <Edit2 className="w-3 h-3" />
+              </button>
+            )}
+            {onCopy && (
+              <button type="button" onClick={() => onCopy(log.payload)} className={`p-1 ${hoverBtn} rounded transition-colors`} title="复制 Payload">
+                <Copy className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          <span className={`text-[10px] font-mono ${mutedText} shrink-0`}>{log.timestamp}</span>
+        </div>
+        <div className={`rounded-lg border px-3 py-2 text-[12px] font-mono leading-relaxed break-all whitespace-pre-wrap ${panelCls}`}>
+          {logViewMode === 'hex' ? (
+            <span className={theme === 'light' ? 'text-purple-600' : 'text-purple-300'}>{toHex(log.payload)}</span>
+          ) : typeof log.payload === 'string' && isJson(log.payload) ? (
+            <JsonHighlight text={tryFormatJson(log.payload)} theme={theme} />
+          ) : (
+            String(log.payload ?? '')
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
 
 export default function MqttDebugger() {
   const runtime = detectRuntime();
@@ -790,12 +941,20 @@ export default function MqttDebugger() {
     handleLoadAction(action);
   };
 
-  const loadPublishDraft = (draft) => {
+  const loadPublishDraft = useCallback((draft) => {
     if (!draft) return;
     if (typeof draft.topic === 'string') setPubTopic(draft.topic);
     if (typeof draft.payload === 'string') setPubMessage(draft.payload);
     setTimeout(() => pubMessageTextareaRef.current?.focus(), 0);
-  };
+  }, []);
+
+  // 供日志行 LogItem 使用的稳定回调（React.memo 生效依赖引用稳定）
+  const handleEditFromLog = useCallback((log) => {
+    loadPublishDraft({ topic: log.topic, payload: log.payload });
+  }, [loadPublishDraft]);
+  const handleCopyPayload = useCallback((payload) => {
+    navigator.clipboard.writeText(String(payload ?? ''));
+  }, []);
 
   const toggleQuickActionGroupCollapsed = (collapseKey) => {
     const root = quickActionsScrollRef.current;
@@ -1060,7 +1219,7 @@ export default function MqttDebugger() {
     setLogs(prev => {
       logIdRef.current += 1;
       const newLogs = [...prev, { id: logIdRef.current, timestamp: new Date().toLocaleTimeString(), type, topic, payload, details }];
-      return newLogs.length > 500 ? newLogs.slice(newLogs.length - 500) : newLogs;
+      return newLogs.length > MAX_LOGS ? newLogs.slice(newLogs.length - MAX_LOGS) : newLogs;
     });
   };
 
@@ -1588,9 +1747,6 @@ export default function MqttDebugger() {
   
   // Formatters
   const formatDuration = (s) => `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
-  const toHex = (str) => { let h=''; for(let i=0;i<str.length;i++) h+=str.charCodeAt(i).toString(16).padStart(2,'0')+' '; return h.toUpperCase(); };
-  const isJson = (str) => { try { JSON.parse(str); return true; } catch { return false; } };
-  const tryFormatJson = (str) => { try { return JSON.stringify(JSON.parse(str), null, 2); } catch { return str; } };
 
   // KISS: 仅支持 MQTT 常见通配符（+ / #），用于订阅监控的"按主题筛选"。
   const mqttTopicMatches = (filter, topic) => {
@@ -2349,11 +2505,11 @@ export default function MqttDebugger() {
       )}
 
       {/* 左侧侧边栏 */}
-      <aside className={`w-80 ${t.bgSecondary} backdrop-blur-xl border-r ${t.borderLight} flex flex-col shrink-0 transition-colors duration-300`}>
+      <aside className={`w-72 ${t.bgSecondary} backdrop-blur-xl border-r ${t.borderLight} flex flex-col shrink-0 transition-colors duration-300`}>
 
         {/* Logo 区域 */}
-        <div className="p-6 pb-4">
-          <div className="flex items-center justify-between mb-6">
+        <div className="p-4 pb-3">
+          <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/30">
                 <Activity className="w-5 h-5 text-white" />
@@ -2373,51 +2529,44 @@ export default function MqttDebugger() {
             </button>
           </div>
 
-          {/* 连接状态卡片 */}
-          <div className={`p-4 rounded-2xl border transition-all duration-300 ${
+          {/* 连接状态单行胶囊 */}
+          <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all duration-300 ${
             connectStatus === 'connected'
-              ? theme === 'light' ? 'bg-emerald-50 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/30'
+              ? theme === 'light' ? 'bg-emerald-50/60 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/30'
               : connectStatus === 'connecting'
-                ? theme === 'light' ? 'bg-amber-50 border-amber-200' : 'bg-amber-500/10 border-amber-500/30'
+                ? theme === 'light' ? 'bg-amber-50/60 border-amber-200' : 'bg-amber-500/10 border-amber-500/30'
                 : `${t.bgTertiary} ${t.border}`
           }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                {connectStatus === 'connected' ? <Wifi className="w-4 h-4 text-emerald-400" /> : <WifiOff className="w-4 h-4 text-slate-500" />}
-                <span className={`text-sm font-medium ${connectStatus === 'connected' ? 'text-emerald-400' : 'text-slate-400'}`}>
-                  {connectStatus === 'connected' ? '已连接' : connectStatus === 'connecting' ? '连接中...' : '未连接'}
-                </span>
-              </div>
-              {connectStatus === 'connected' && (
-                <div className="flex items-center gap-1 text-xs text-slate-500 font-mono">
-                  <Clock className="w-3 h-3" />
-                  <span>{formatDuration(connectDuration)}</span>
-                </div>
-              )}
+            <div className="relative flex h-2 w-2 shrink-0">
+              <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${connectStatus === 'connected' ? 'animate-ping bg-emerald-400' : connectStatus === 'connecting' ? 'animate-ping bg-amber-400' : ''}`}></span>
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${connectStatus === 'connected' ? 'bg-emerald-500' : connectStatus === 'connecting' ? 'bg-amber-500' : 'bg-slate-400'}`}></span>
             </div>
+            <span className={`text-xs font-semibold shrink-0 ${connectStatus === 'connected' ? (theme === 'light' ? 'text-emerald-700' : 'text-emerald-400') : connectStatus === 'connecting' ? (theme === 'light' ? 'text-amber-700' : 'text-amber-400') : t.textSecondary}`}>
+              {connectStatus === 'connected' ? '已连接' : connectStatus === 'connecting' ? '连接中...' : '未连接'}
+            </span>
             {connectStatus === 'connected' && (
-              <p className="text-xs text-slate-500 truncate">{connection.host}:{connection.port}</p>
+              <span className={`text-[11px] font-mono truncate flex-1 text-center min-w-0 ${theme === 'light' ? 'text-emerald-700/60' : 'text-emerald-500/60'}`}>{connection.host}:{connection.port}</span>
+            )}
+            {connectStatus === 'connected' && (
+              <span className={`text-[10px] font-mono shrink-0 ${theme === 'light' ? 'text-emerald-600/80' : 'text-emerald-400/80'}`}>{formatDuration(connectDuration)}</span>
             )}
             {reconnectCount > 0 && connectStatus !== 'connected' && (
-              <p className="text-xs text-amber-500 mt-2">🔄 重连次数: {reconnectCount}</p>
+              <span className="text-[10px] text-amber-500 font-mono ml-auto shrink-0">重连×{reconnectCount}</span>
             )}
           </div>
         </div>
 
-        {/* 统计卡片区 */}
-        <div className="px-6 pb-4">
-          <div className="grid grid-cols-3 gap-2">
-            <div className={`${t.card} p-3 rounded-xl border text-center ${t.shadow}`}>
-              <p className="text-lg font-bold text-blue-500">{msgStats.sent}</p>
-              <p className={`text-[10px] ${t.textMuted}`}>发送</p>
+        {/* 统计胶囊区 */}
+        <div className="px-4 pb-3">
+          <div className="flex items-center gap-1.5">
+            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-full text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-blue-600' : 'bg-white/5 text-blue-400'}`}>
+              <ArrowUpRight className="w-3 h-3 opacity-70" />{msgStats.sent}
             </div>
-            <div className={`${t.card} p-3 rounded-xl border text-center ${t.shadow}`}>
-              <p className="text-lg font-bold text-emerald-500">{msgStats.received}</p>
-              <p className={`text-[10px] ${t.textMuted}`}>接收</p>
+            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-full text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-emerald-600' : 'bg-white/5 text-emerald-400'}`}>
+              <ArrowDownRight className="w-3 h-3 opacity-70" />{msgStats.received}
             </div>
-            <div className={`${t.card} p-3 rounded-xl border text-center ${t.shadow}`}>
-              <p className="text-lg font-bold text-rose-500">{msgStats.errors}</p>
-              <p className={`text-[10px] ${t.textMuted}`}>错误</p>
+            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-full text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-rose-500' : 'bg-white/5 text-rose-400'}`}>
+              <AlertCircle className="w-3 h-3 opacity-70" />{msgStats.errors}
             </div>
           </div>
         </div>
@@ -2670,21 +2819,23 @@ export default function MqttDebugger() {
       <main className={`flex-1 flex flex-col min-w-0 ${t.bg} transition-colors duration-300`}>
 
         {/* 顶部 Header */}
-        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/80' : 'bg-[#0B1120]/80'} backdrop-blur-xl border-b ${t.border} px-6 py-4 flex items-center justify-between shrink-0`}>
-          <div>
-            <h2 className={`text-xl font-bold ${t.text}`}>实时监控</h2>
-            <p className={`${t.textMuted} text-sm mt-0.5`}>查看消息日志和发送数据</p>
+        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/80' : 'bg-[#0B1120]/80'} backdrop-blur-xl border-b ${t.border} px-5 py-2.5 flex items-center justify-between shrink-0`}>
+          <div className="flex items-center gap-3">
+            <h2 className={`text-sm font-semibold ${t.text} flex items-center gap-2`}>
+              <MessageSquare className="w-4 h-4 text-indigo-500"/> 消息日志
+            </h2>
+            <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full ${theme === 'light' ? 'text-indigo-600 bg-indigo-50' : 'text-indigo-300 bg-indigo-500/10'}`}>{filteredMessageLogs.length}</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative group">
-              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${t.textMuted} group-focus-within:text-indigo-500 transition-colors`} size={16} />
+              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${t.textMuted} group-focus-within:text-indigo-500 transition-colors`} size={15} />
               <input
                 type="text"
                 value={logFilter}
                 onChange={e => setLogFilter(e.target.value)}
                 placeholder="搜索日志..."
                 ref={logFilterInputRef}
-                className={`pl-9 pr-4 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm w-56 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all ${t.text} placeholder:${t.textMuted}`}
+                className={`pl-9 pr-4 py-1.5 ${t.bgInput} border ${t.border} rounded-full text-sm w-52 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all ${t.text} placeholder:${t.textMuted}`}
               />
             </div>
             <button
@@ -2709,13 +2860,7 @@ export default function MqttDebugger() {
 
         {/* 日志区域 */}
         <div className="flex-1 flex flex-col min-h-0 relative">
-          <div className={`px-6 py-3 ${t.bgTertiary} border-b ${t.border} flex justify-between items-center shrink-0`}>
-            <div className="flex items-center gap-3">
-              <h3 className={`text-sm font-semibold ${t.textSecondary} flex items-center gap-2`}>
-                <MessageSquare className="w-4 h-4 text-indigo-500"/> 消息日志
-              </h3>
-              <span className={`text-xs ${t.textMuted}`}>{filteredMessageLogs.length} 条记录</span>
-            </div>
+          <div className={`px-5 py-2 ${t.bgTertiary} border-b ${t.border} flex items-center justify-end shrink-0`}>
             <div className="flex items-center gap-2">
               <button onClick={() => setLogViewMode(m => m==='text'?'hex':'text')} className={`text-xs px-3 py-1.5 rounded-lg ${t.textSecondary} ${t.bgHover} transition-colors flex items-center gap-1`}>
                 <Binary className="w-3 h-3"/>{logViewMode.toUpperCase()}
@@ -2730,7 +2875,7 @@ export default function MqttDebugger() {
           </div>
 
           {/* 日志列表 */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 custom-scrollbar">
             {filteredMessageLogs.length === 0 ? (
               <div className={`flex flex-col items-center justify-center h-full ${t.textMuted}`}>
                 <MessageSquare className="w-12 h-12 mb-3 opacity-30" />
@@ -2739,54 +2884,7 @@ export default function MqttDebugger() {
               </div>
             ) : (
               filteredMessageLogs.map(log => (
-                <div key={log.id} className="flex gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300 group">
-                  <div className={`text-xs ${t.textMuted} min-w-[70px] pt-2 font-mono`}>{log.timestamp}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold uppercase ${
-                        log.type === 'sent' ? (theme === 'light' ? 'text-blue-600 border-blue-200 bg-blue-50' : 'text-blue-400 border-blue-500/30 bg-blue-500/10') :
-                        log.type === 'received' ? (theme === 'light' ? 'text-emerald-600 border-emerald-200 bg-emerald-50' : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10') :
-                        log.type === 'system' ? (theme === 'light' ? 'text-slate-600 border-slate-200 bg-slate-50' : 'text-slate-400 border-slate-500/30 bg-slate-500/10') :
-                        (theme === 'light' ? 'text-rose-600 border-rose-200 bg-rose-50' : 'text-rose-400 border-rose-500/30 bg-rose-500/10')
-                      }`}>{log.type}</span>
-                      {log.topic && <span className={`text-xs ${t.textSecondary} font-semibold font-mono`}>{log.topic}</span>}
-                      <div className="ml-auto flex items-center gap-1">
-                        {!!log.topic && typeof log.payload === 'string' && (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); loadPublishDraft({ topic: log.topic, payload: log.payload }); }}
-                            className={`opacity-0 group-hover:opacity-100 ${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded transition-all`}
-                            title="填充到发送区编辑"
-                          >
-                            <Edit2 className="w-3 h-3"/>
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => navigator.clipboard.writeText(String(log.payload ?? ''))}
-                          className={`opacity-0 group-hover:opacity-100 ${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded transition-all`}
-                          title="复制 Payload"
-                        >
-                          <Copy className="w-3 h-3"/>
-                        </button>
-                      </div>
-                    </div>
-                    <div className={`p-4 rounded-xl text-sm break-all whitespace-pre-wrap border font-mono ${
-                      log.type === 'sent' ? (theme === 'light' ? 'bg-blue-50 border-blue-100 text-blue-900' : 'bg-blue-500/5 border-blue-500/20 text-blue-200') :
-                      log.type === 'received' ? (theme === 'light' ? 'bg-emerald-50 border-emerald-100 text-emerald-900' : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-200') :
-                      log.type === 'system' ? (theme === 'light' ? 'bg-slate-50 border-slate-100 text-slate-700' : 'bg-slate-800/50 border-slate-700/50 text-slate-300') :
-                      (theme === 'light' ? 'bg-rose-50 border-rose-100 text-rose-900' : 'bg-rose-500/5 border-rose-500/20 text-rose-200')
-                    }`}>
-                      {logViewMode === 'hex' ? (
-                        <div className={`${theme === 'light' ? 'text-purple-600' : 'text-purple-300'} tracking-wider`}>{toHex(log.payload)}</div>
-                      ) : (
-                        isJson(log.payload) ? (
-                          <pre className={`${theme === 'light' ? 'text-indigo-600' : 'text-indigo-300'} overflow-x-auto`}>{tryFormatJson(log.payload)}</pre>
-                        ) : log.payload
-                      )}
-                    </div>
-                  </div>
-                </div>
+                <LogItem key={log.id} log={log} theme={theme} logViewMode={logViewMode} onEdit={handleEditFromLog} onCopy={handleCopyPayload} />
               ))
             )}
             <div ref={logsEndRef} />
