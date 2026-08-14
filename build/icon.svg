@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- MQTT 心跳波形：单条 EKG 线条（基线 + P 波 + QRS 尖峰 + T 波） -->
-  <path d="M 92 640 L 300 640 L 360 560 L 420 640 L 485 640 L 540 200 L 600 820 L 665 640 L 725 640 L 795 500 L 865 640 L 932 640"
-        fill="none" stroke="#6366F1" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- MQTT 心跳波形：单次干净脉冲（基线 + 一个利落尖峰），品牌蓝 -->
+  <path d="M 120 640 L 424 640 L 492 200 L 560 860 L 628 640 L 904 640"
+        fill="none" stroke="#2563EB" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { 
@@ -23,13 +23,6 @@ const PROTOCOL_PORT_MAP = {
   'mqtt': { port: 1883, description: 'MQTT TCP' },
   'mqtts': { port: 8883, description: 'MQTT TLS' }
 };
-
-// 常用 MQTT 服务器预设
-const PRESET_BROKERS = [
-  { name: 'EMQX 公共服务器', host: 'broker.emqx.io', ws: 8083, wss: 8084, path: '/mqtt' },
-  { name: 'HiveMQ 公共服务器', host: 'broker.hivemq.com', ws: 8000, wss: 8884, path: '/mqtt' },
-  { name: 'Mosquitto 测试服务器', host: 'test.mosquitto.org', ws: 8080, wss: 8081, path: '' }
-];
 
 // --- Firebase 初始化与容错处理 ---
 let app, auth, db;
@@ -56,6 +49,7 @@ try {
 
 // --- 日志展示辅助（模块级纯函数） ---
 const MAX_LOGS = 500;
+const THEME_STORAGE_KEY = 'mqtt_theme_v2';
 
 const toHex = (str) => { let h=''; for(let i=0;i<str.length;i++) h+=str.charCodeAt(i).toString(16).padStart(2,'0')+' '; return h.toUpperCase(); };
 const isJson = (str) => { try { JSON.parse(str); return true; } catch { return false; } };
@@ -118,13 +112,13 @@ function tokenizeJson(text) {
 function JsonHighlight({ text, theme }) {
   const tokens = useMemo(() => tokenizeJson(text), [text]);
   const cls = {
-    key: theme === 'light' ? 'text-blue-600' : 'text-blue-400',
-    string: theme === 'light' ? 'text-emerald-700' : 'text-emerald-400',
-    number: theme === 'light' ? 'text-amber-600' : 'text-amber-400',
-    boolean: theme === 'light' ? 'text-violet-600' : 'text-violet-400',
-    null: theme === 'light' ? 'text-violet-600' : 'text-violet-400',
-    other: theme === 'light' ? 'text-slate-600' : 'text-slate-300',
-    punct: theme === 'light' ? 'text-slate-500' : 'text-slate-400',
+    key: theme === 'light' ? 'text-blue-600' : 'text-blue-400/80',
+    string: theme === 'light' ? 'text-emerald-700' : 'text-emerald-400/70',
+    number: theme === 'light' ? 'text-amber-600' : 'text-amber-400/70',
+    boolean: theme === 'light' ? 'text-violet-600' : 'text-violet-400/70',
+    null: theme === 'light' ? 'text-violet-600' : 'text-violet-400/70',
+    other: theme === 'light' ? 'text-slate-600' : 'text-gray-300',
+    punct: theme === 'light' ? 'text-slate-500' : 'text-gray-500',
     whitespace: '',
   };
   return tokens.map((tok, idx) => (
@@ -139,44 +133,28 @@ const LogItem = React.memo(function LogItem({ log, theme, logViewMode, onEdit, o
   const isError = !isSent && !isReceived && !isSystem;
   const tagLabel = isSent ? 'TX' : isReceived ? 'RX' : isError ? 'ERR' : 'SYS';
 
-  const lineCls = isSent
-    ? (theme === 'light' ? 'border-blue-400/40' : 'border-blue-500/40')
-    : isReceived
-      ? (theme === 'light' ? 'border-emerald-400/40' : 'border-emerald-500/40')
-      : isError
-        ? (theme === 'light' ? 'border-rose-400/40' : 'border-rose-500/40')
-        : (theme === 'light' ? 'border-slate-300/70' : 'border-slate-600/50');
-
-  const dotCls = isSent
-    ? (theme === 'light' ? 'bg-white border-blue-400' : 'bg-slate-900 border-blue-500')
-    : isReceived
-      ? (theme === 'light' ? 'bg-white border-emerald-400' : 'bg-slate-900 border-emerald-500')
-      : isError
-        ? (theme === 'light' ? 'bg-white border-rose-400' : 'bg-slate-900 border-rose-500')
-        : (theme === 'light' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500');
-
   const tagCls = isSent
-    ? (theme === 'light' ? 'text-blue-600' : 'text-blue-400')
+    ? (theme === 'light' ? 'text-blue-600' : 'text-blue-400/80')
     : isReceived
-      ? (theme === 'light' ? 'text-emerald-600' : 'text-emerald-400')
+      ? (theme === 'light' ? 'text-emerald-600' : 'text-emerald-400/70')
       : isError
-        ? (theme === 'light' ? 'text-rose-600' : 'text-rose-400')
-        : (theme === 'light' ? 'text-slate-500' : 'text-slate-400');
+        ? (theme === 'light' ? 'text-rose-600' : 'text-rose-400/80')
+        : (theme === 'light' ? 'text-slate-500' : 'text-gray-400');
 
-  const panelCls = theme === 'light' ? 'bg-white border-slate-200/70' : 'bg-slate-900/40 border-slate-700/40';
-  const mutedText = theme === 'light' ? 'text-slate-400' : 'text-slate-500';
-  const secondaryText = theme === 'light' ? 'text-slate-600' : 'text-slate-400';
-  const hoverBtn = theme === 'light' ? 'text-slate-400 hover:text-slate-700' : 'text-slate-500 hover:text-slate-200';
+  const panelCls = theme === 'light' ? 'bg-white border-slate-200/70' : 'bg-[#0A0A0A] border-white/5';
+  const mutedText = theme === 'light' ? 'text-slate-400' : 'text-gray-500';
+  const secondaryText = theme === 'light' ? 'text-slate-600' : 'text-gray-300';
+  const hoverBtn = theme === 'light' ? 'text-slate-400 hover:text-slate-700' : 'text-gray-500 hover:text-gray-200';
 
   const showEdit = !!log.topic && typeof log.payload === 'string' && onEdit;
 
   return (
-    <div className={`relative pl-4 border-l-2 ${lineCls} animate-in fade-in slide-in-from-bottom-2 duration-300 group`}>
-      <span className={`absolute -left-[5px] top-1.5 w-2 h-2 rounded-full border-2 ${dotCls} group-hover:scale-125 transition-transform`}></span>
+    <div className="relative group">
       <div className="pb-1">
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className={`text-[9px] font-bold tracking-wider ${tagCls}`}>{tagLabel}</span>
-          {log.topic && <span className={`text-xs font-semibold font-mono truncate ${secondaryText}`}>{log.topic}</span>}
+        <div className="flex items-center gap-3 mb-1.5">
+          <span className={`text-[10px] font-mono ${mutedText} shrink-0`}>{log.timestamp}</span>
+          <span className={`text-[9px] font-bold tracking-wider uppercase ${tagCls}`}>{tagLabel}</span>
+          {log.topic && <span className={`text-[11px] font-mono truncate opacity-90 ${secondaryText}`}>{log.topic}</span>}
           <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             {showEdit && (
               <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(log); }} className={`p-1 ${hoverBtn} rounded transition-colors`} title="填充到发送区编辑">
@@ -189,11 +167,10 @@ const LogItem = React.memo(function LogItem({ log, theme, logViewMode, onEdit, o
               </button>
             )}
           </div>
-          <span className={`text-[10px] font-mono ${mutedText} shrink-0`}>{log.timestamp}</span>
         </div>
         <div className={`rounded-lg border px-3 py-2 text-[12px] font-mono leading-relaxed break-all whitespace-pre-wrap ${panelCls}`}>
           {logViewMode === 'hex' ? (
-            <span className={theme === 'light' ? 'text-purple-600' : 'text-purple-300'}>{toHex(log.payload)}</span>
+            <span className={theme === 'light' ? 'text-purple-600' : 'text-gray-400'}>{toHex(log.payload)}</span>
           ) : typeof log.payload === 'string' && isJson(log.payload) ? (
             <JsonHighlight text={tryFormatJson(log.payload)} theme={theme} />
           ) : (
@@ -289,7 +266,6 @@ export default function MqttDebugger() {
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [configCollapsed, setConfigCollapsed] = useState(false); // 新增：连接后折叠配置面板
-  const [selectedPresetBroker, setSelectedPresetBroker] = useState('');
 
   const [subscriptions, setSubscriptions] = useState([]);
   const [subscriptionsCollapsed, setSubscriptionsCollapsed] = useState(true);
@@ -426,20 +402,21 @@ export default function MqttDebugger() {
 
   // 主题状态：无本地记忆时跟随系统主题
   const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem('mqtt_theme');
-    if (saved) return saved;
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    return saved === 'light' || saved === 'dark' ? saved : 'dark';
+  });
+  const themeUserOverride = useRef((() => {
+    try { return !!localStorage.getItem(THEME_STORAGE_KEY); } catch { return false; }
+  })());
+
+  // Tailwind darkMode:'class'：应用内主题同步到 <html> 的 dark 类，先于绘制执行避免闪烁
+  useLayoutEffect(() => {
     try {
-      if (typeof window !== 'undefined' && window.matchMedia) {
-        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-      }
+      document.documentElement.classList.toggle('dark', theme === 'dark');
     } catch {
       // ignore
     }
-    return 'dark';
-  });
-  const themeUserOverride = useRef((() => {
-    try { return !!localStorage.getItem('mqtt_theme'); } catch { return false; }
-  })());
+  }, [theme]);
 
   // 系统主题变化时跟随，直到用户手动切换过主题
   useEffect(() => {
@@ -461,7 +438,7 @@ export default function MqttDebugger() {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
     themeUserOverride.current = true;
     setTheme(newTheme);
-    localStorage.setItem('mqtt_theme', newTheme);
+    localStorage.setItem(THEME_STORAGE_KEY, newTheme);
   };
 
   // 主题配色
@@ -470,41 +447,41 @@ export default function MqttDebugger() {
     bg: 'bg-[#F8FAFC]',
     bgSecondary: 'bg-white',
     bgTertiary: 'bg-slate-50',
-    bgHover: 'hover:bg-slate-50',
+    bgHover: 'hover:bg-slate-100',
     bgInput: 'bg-white',
-    border: 'border-slate-200',
-    borderLight: 'border-slate-100',
+    border: 'border-slate-200/80',
+    borderLight: 'border-slate-200/60',
     text: 'text-slate-900',
     textSecondary: 'text-slate-600',
     textMuted: 'text-slate-400',
     shadow: 'shadow-sm',
-    shadowLg: 'shadow-lg shadow-slate-200/50',
-    card: 'bg-white border-slate-100',
-    cardHover: 'hover:border-slate-200 hover:shadow-md',
-    accent: 'indigo',
-    accentBg: 'bg-indigo-600',
-    accentText: 'text-indigo-600',
-    accentLight: 'bg-indigo-50',
+    shadowLg: 'shadow-lg shadow-slate-200/40',
+    card: 'bg-white border-slate-200/70',
+    cardHover: 'hover:border-slate-300',
+    accent: 'blue',
+    accentBg: 'bg-blue-600',
+    accentText: 'text-blue-600',
+    accentLight: 'bg-blue-50',
   } : {
     // 暗色主题
-    bg: 'bg-[#0B1120]',
-    bgSecondary: 'bg-slate-900/50',
-    bgTertiary: 'bg-slate-800/50',
-    bgHover: 'hover:bg-slate-800',
-    bgInput: 'bg-slate-800/50',
-    border: 'border-slate-700/50',
-    borderLight: 'border-slate-800',
-    text: 'text-slate-100',
-    textSecondary: 'text-slate-400',
-    textMuted: 'text-slate-500',
+    bg: 'bg-[#050505]',
+    bgSecondary: 'bg-[#0A0A0A]',
+    bgTertiary: 'bg-white/[0.03]',
+    bgHover: 'hover:bg-white/[0.05]',
+    bgInput: 'bg-[#0A0A0A]',
+    border: 'border-white/[0.05]',
+    borderLight: 'border-white/[0.05]',
+    text: 'text-gray-200',
+    textSecondary: 'text-gray-400',
+    textMuted: 'text-gray-500',
     shadow: 'shadow-none',
-    shadowLg: 'shadow-lg shadow-black/20',
-    card: 'bg-slate-800/30 border-slate-700/30',
-    cardHover: 'hover:border-slate-600',
-    accent: 'indigo',
-    accentBg: 'bg-indigo-600',
-    accentText: 'text-indigo-400',
-    accentLight: 'bg-indigo-500/10',
+    shadowLg: 'shadow-[0_8px_30px_rgba(0,0,0,0.4)]',
+    card: 'bg-[#0A0A0A] border-white/[0.05]',
+    cardHover: 'hover:border-white/[0.10]',
+    accent: 'blue',
+    accentBg: 'bg-blue-600',
+    accentText: 'text-blue-400',
+    accentLight: 'bg-blue-500/10',
   };
   const themedSelectClass = `themed-select ${t.bgInput} border ${t.border} outline-none transition-all ${t.text}`;
 
@@ -1567,23 +1544,6 @@ export default function MqttDebugger() {
     }
   };
 
-  const applyPresetBroker = (presetName) => {
-    const preset = (PRESET_BROKERS || []).find((b) => b && b.name === presetName);
-    if (!preset) return;
-    const protocol = 'wss';
-    const port = Number(preset.wss || 8084);
-    const path = String(preset.path || '/mqtt');
-
-    setConnection((prev) => ({
-      ...prev,
-      name: preset.name,
-      host: preset.host,
-      protocol,
-      port,
-      path,
-    }));
-  };
-
   const handleDisconnect = () => {
     // 保存当前订阅列表供重连使用
     lastSubscriptionsRef.current = [...subscriptions];
@@ -1867,7 +1827,7 @@ export default function MqttDebugger() {
   };
 
   return (
-    <div className={`flex h-screen ${t.bg} ${t.text} font-sans overflow-hidden selection:bg-indigo-500/30 transition-colors duration-300`}>
+    <div className={`app-shell flex h-screen ${t.bg} ${t.text} font-sans overflow-hidden selection:bg-blue-500/20 transition-colors duration-300`}>
 
       {/* 模态框 */}
       {modal.open && (
@@ -1880,12 +1840,12 @@ export default function MqttDebugger() {
             {modal.type === 'input' && (
               <input
                 autoFocus type="text" value={modal.inputValue} onChange={(e) => setModal({...modal, inputValue: e.target.value})} onKeyDown={(e) => e.key === 'Enter' && handleModalSubmit()}
-                className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none mb-4 transition-all ${t.text}`}
+                className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none mb-4 transition-all ${t.text}`}
               />
             )}
             <div className="flex justify-end gap-3">
               <button onClick={() => setModal({...modal, open: false})} className={`px-4 py-2 ${t.bgTertiary} ${t.bgHover} rounded-xl text-sm font-medium transition-colors ${t.textSecondary}`}>取消</button>
-              <button onClick={handleModalSubmit} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg ${modal.type === 'confirm' ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'}`}>{modal.type === 'confirm' ? '确定删除' : '确定保存'}</button>
+              <button onClick={handleModalSubmit} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg ${modal.type === 'confirm' ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20'}`}>{modal.type === 'confirm' ? '确定删除' : '确定保存'}</button>
             </div>
           </div>
         </div>
@@ -1902,7 +1862,7 @@ export default function MqttDebugger() {
           <div className={`relative ${t.bgSecondary} rounded-2xl shadow-2xl max-w-3xl w-full border ${t.border} p-6`}>
             <div className="flex items-center justify-between gap-3 mb-4">
               <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}>
-                <Edit2 className="w-5 h-5 text-indigo-500" />
+                <Edit2 className="w-5 h-5 text-blue-500" />
                 编辑发送消息
               </h3>
               <button
@@ -1922,7 +1882,7 @@ export default function MqttDebugger() {
                   type="text"
                   value={publishEditorTopic}
                   onChange={(e) => setPublishEditorTopic(e.target.value)}
-                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm font-mono focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm font-mono focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all ${t.text}`}
                   placeholder="Topic (e.g. test/topic)"
                 />
               </div>
@@ -1932,7 +1892,7 @@ export default function MqttDebugger() {
                   autoFocus
                   value={publishEditorPayload}
                   onChange={(e) => setPublishEditorPayload(e.target.value)}
-                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-y focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all min-h-[260px] ${t.text}`}
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-y focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all min-h-[260px] ${t.text}`}
                   placeholder='Payload (e.g. {"msg": "Hello"})'
                 />
                 <div className={`text-[10px] mt-1 ${t.textMuted}`}>快捷键：Ctrl/Cmd + Enter 应用并关闭</div>
@@ -1950,7 +1910,7 @@ export default function MqttDebugger() {
               <button
                 type="button"
                 onClick={applyPublishEditor}
-                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20"
+                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20"
               >
                 应用
               </button>
@@ -2020,7 +1980,7 @@ export default function MqttDebugger() {
                   onClick={() => setQuickActionGroupMode('smart')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
                     quickActionGroupMode === 'smart'
-                      ? (theme === 'light' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-200')
+                      ? (theme === 'light' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-blue-500/20 border-blue-500/40 text-blue-200')
                       : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
                   }`}
                   title="手动分组优先；未设置时自动按名称前缀与 Topic 归类"
@@ -2032,7 +1992,7 @@ export default function MqttDebugger() {
                   onClick={() => setQuickActionGroupMode('topic-prefix')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
                     quickActionGroupMode === 'topic-prefix'
-                      ? (theme === 'light' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-200')
+                      ? (theme === 'light' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-blue-500/20 border-blue-500/40 text-blue-200')
                       : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
                   }`}
                   title="手动分组优先；其余按 Topic 前缀段数归类"
@@ -2113,8 +2073,8 @@ export default function MqttDebugger() {
                           onClick={(e) => { e.stopPropagation(); fillQuickAction(action); }}
                           className={`px-3 py-1 rounded-lg text-xs font-bold border transition-colors ${
                             theme === 'light'
-                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                              : 'bg-indigo-500/10 text-indigo-200 border-indigo-500/30 hover:bg-indigo-500/20'
+                              ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                              : 'bg-blue-500/10 text-blue-200 border-blue-500/30 hover:bg-blue-500/20'
                           }`}
                           title="填充到发送区"
                         >
@@ -2142,7 +2102,7 @@ export default function MqttDebugger() {
                           className={`p-1 rounded-lg border ${t.border} ${t.bgSecondary} ${t.bgHover} transition-colors`}
                           title="设置分组（留空则自动）"
                         >
-                          <Layout className={`w-4 h-4 ${action?.group ? (theme === 'light' ? 'text-indigo-600' : 'text-indigo-300') : t.textMuted}`} />
+                          <Layout className={`w-4 h-4 ${action?.group ? (theme === 'light' ? 'text-blue-600' : 'text-blue-300') : t.textMuted}`} />
                         </button>
                         <button
                           type="button"
@@ -2283,7 +2243,7 @@ export default function MqttDebugger() {
           <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-lg w-full border ${t.border} p-6`}>
             <div className="flex items-center justify-between gap-3 mb-4">
               <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}>
-                <Edit2 className="w-5 h-5 text-indigo-500" />
+                <Edit2 className="w-5 h-5 text-blue-500" />
                 编辑指令
               </h3>
               <button
@@ -2302,7 +2262,7 @@ export default function MqttDebugger() {
                   type="text"
                   value={editingAction.name}
                   onChange={(e) => setEditingAction({ ...editingAction, name: e.target.value })}
-                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}
+                   className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all ${t.text}`}
                   placeholder="指令名称"
                 />
               </div>
@@ -2312,7 +2272,7 @@ export default function MqttDebugger() {
                   type="text"
                   value={editingAction.topic}
                   onChange={(e) => setEditingAction({ ...editingAction, topic: e.target.value })}
-                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm font-mono focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm font-mono focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all ${t.text}`}
                   placeholder="test/topic"
                 />
               </div>
@@ -2322,7 +2282,7 @@ export default function MqttDebugger() {
                   value={editingAction.payload}
                   onChange={(e) => setEditingAction({ ...editingAction, payload: e.target.value })}
                   onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); handleSaveEditAction(); } }}
-                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-y focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all min-h-[120px] ${t.text}`}
+                  className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-y focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all min-h-[120px] ${t.text}`}
                   placeholder='{"msg": "Hello"}'
                 />
                 <div className={`text-[10px] mt-1 ${t.textMuted}`}>Ctrl/Cmd + Enter 保存</div>
@@ -2337,7 +2297,7 @@ export default function MqttDebugger() {
                       onClick={() => setEditingAction({ ...editingAction, qos: q })}
                       className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-all ${
                         editingAction.qos === q
-                          ? (theme === 'light' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-200')
+                          ? (theme === 'light' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-blue-500/20 border-blue-500/40 text-blue-200')
                           : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
                       }`}
                     >
@@ -2350,7 +2310,7 @@ export default function MqttDebugger() {
                     type="checkbox"
                     checked={editingAction.retain}
                     onChange={(e) => setEditingAction({ ...editingAction, retain: e.target.checked })}
-                    className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-indigo-600"
+                    className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-blue-600"
                   />
                   Retain
                 </label>
@@ -2367,7 +2327,7 @@ export default function MqttDebugger() {
               <button
                 type="button"
                 onClick={handleSaveEditAction}
-                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20"
+                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20"
               >
                 保存
               </button>
@@ -2389,13 +2349,13 @@ export default function MqttDebugger() {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-md w-full border ${t.border} p-6`}>
             <div className="flex justify-between items-center mb-4">
-              <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}><Settings className="w-5 h-5 text-indigo-500"/> 同步与备份</h3>
+              <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}><Settings className="w-5 h-5 text-blue-500"/> 同步与备份</h3>
               <button onClick={() => setShowSyncModal(false)} className={`${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded-lg transition-colors`}><X className="w-5 h-5"/></button>
             </div>
 
             <div className={`p-4 ${t.bgTertiary} border ${t.border} rounded-xl space-y-3 mb-4`}>
               <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-indigo-500" />
+                <FileText className="w-4 h-4 text-blue-500" />
                 <div className={`text-sm font-semibold ${t.text}`}>本地备份</div>
                 <div className={`text-xs ${t.textMuted}`}>（默认不包含密码）</div>
               </div>
@@ -2435,7 +2395,7 @@ export default function MqttDebugger() {
                 <p className={`text-sm ${t.textSecondary} mb-4`}>输入一个唯一的 <b className={t.text}>Space ID</b>，所有使用该 ID 的设备将实时同步数据。</p>
                 <div className="space-y-4">
                   <div className="flex gap-2">
-                    <input type="text" value={inputSpaceId} onChange={(e) => setInputSpaceId(e.target.value)} placeholder="Space ID" className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}/>
+                    <input type="text" value={inputSpaceId} onChange={(e) => setInputSpaceId(e.target.value)} placeholder="Space ID" className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all ${t.text}`}/>
                     <button
                       onClick={() => {
                         const rand = (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -2472,7 +2432,7 @@ export default function MqttDebugger() {
                         disabled={!syncEncryptEnabled}
                         placeholder={syncEncryptEnabled ? '请输入口令（用于加密/解密）' : '关闭加密时无需口令'}
                         className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2 text-sm outline-none transition-all ${t.text} ${
-                          syncEncryptEnabled ? 'focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20' : 'opacity-60'
+                          syncEncryptEnabled ? 'focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20' : 'opacity-60'
                         }`}
                       />
                       <label className={`flex items-center gap-2 text-xs ${t.textSecondary}`}>
@@ -2494,7 +2454,7 @@ export default function MqttDebugger() {
                     )}
                   </div>
                   <div className="flex gap-3 pt-2">
-                    <button onClick={handleConnectSync} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 rounded-xl font-bold shadow-lg shadow-indigo-500/20 transition-all">开启同步</button>
+                    <button onClick={handleConnectSync} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-xl font-bold shadow-lg shadow-blue-500/20 transition-all">开启同步</button>
                     {syncSpaceId && <button onClick={handleDisconnectSync} className="px-4 bg-rose-100 hover:bg-rose-200 dark:bg-rose-600/20 dark:hover:bg-rose-600/30 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-600/30 rounded-xl font-medium transition-colors">断开</button>}
                   </div>
                 </div>
@@ -2505,24 +2465,24 @@ export default function MqttDebugger() {
       )}
 
       {/* 左侧侧边栏 */}
-      <aside className={`w-72 ${t.bgSecondary} backdrop-blur-xl border-r ${t.borderLight} flex flex-col shrink-0 transition-colors duration-300`}>
+      <aside className={`app-sidebar w-[280px] ${t.bgSecondary} border-r ${t.borderLight} flex flex-col shrink-0 transition-colors duration-300`}>
 
         {/* Logo 区域 */}
         <div className="p-4 pb-3">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/30">
+              <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center shadow-md shadow-blue-600/20">
                 <Activity className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className={`text-lg font-bold tracking-tight ${t.text}`}>MQTT <span className="text-indigo-500">Pro</span></h1>
-                <p className={`text-xs ${t.textMuted}`}>Cloud Edition</p>
+                <h1 className={`text-lg font-bold tracking-tight ${t.text}`}>NR<span className="text-blue-500">mqtt</span></h1>
+                <p className={`text-[11px] ${t.textMuted}`}>MQTT Console</p>
               </div>
             </div>
             {/* 主题切换按钮 */}
             <button
               onClick={toggleTheme}
-              className={`p-2 rounded-xl ${t.bgTertiary} ${t.bgHover} ${t.textSecondary} transition-all hover:scale-105`}
+              className={`p-2 rounded-lg ${t.bgTertiary} ${t.bgHover} ${t.textSecondary} transition-colors`}
               title={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
             >
               {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
@@ -2530,11 +2490,11 @@ export default function MqttDebugger() {
           </div>
 
           {/* 连接状态单行胶囊 */}
-          <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all duration-300 ${
+          <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors duration-300 ${
             connectStatus === 'connected'
-              ? theme === 'light' ? 'bg-emerald-50/60 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/30'
+              ? theme === 'light' ? 'bg-emerald-50/60 border-emerald-200' : 'bg-transparent border-transparent'
               : connectStatus === 'connecting'
-                ? theme === 'light' ? 'bg-amber-50/60 border-amber-200' : 'bg-amber-500/10 border-amber-500/30'
+                ? theme === 'light' ? 'bg-amber-50/60 border-amber-200' : 'bg-transparent border-transparent'
                 : `${t.bgTertiary} ${t.border}`
           }`}>
             <div className="relative flex h-2 w-2 shrink-0">
@@ -2545,10 +2505,10 @@ export default function MqttDebugger() {
               {connectStatus === 'connected' ? '已连接' : connectStatus === 'connecting' ? '连接中...' : '未连接'}
             </span>
             {connectStatus === 'connected' && (
-              <span className={`text-[11px] font-mono truncate flex-1 text-center min-w-0 ${theme === 'light' ? 'text-emerald-700/60' : 'text-emerald-500/60'}`}>{connection.host}:{connection.port}</span>
+              <span className={`text-[11px] font-mono truncate flex-1 text-center min-w-0 ${theme === 'light' ? 'text-emerald-700/60' : 'text-gray-400'}`}>{connection.host}:{connection.port}</span>
             )}
             {connectStatus === 'connected' && (
-              <span className={`text-[10px] font-mono shrink-0 ${theme === 'light' ? 'text-emerald-600/80' : 'text-emerald-400/80'}`}>{formatDuration(connectDuration)}</span>
+              <span className={`text-[10px] font-mono shrink-0 ${theme === 'light' ? 'text-emerald-600/80' : 'text-gray-500'}`}>{formatDuration(connectDuration)}</span>
             )}
             {reconnectCount > 0 && connectStatus !== 'connected' && (
               <span className="text-[10px] text-amber-500 font-mono ml-auto shrink-0">重连×{reconnectCount}</span>
@@ -2559,13 +2519,13 @@ export default function MqttDebugger() {
         {/* 统计胶囊区 */}
         <div className="px-4 pb-3">
           <div className="flex items-center gap-1.5">
-            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-full text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-blue-600' : 'bg-white/5 text-blue-400'}`}>
+            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-blue-600' : 'bg-white/5 text-blue-400'}`}>
               <ArrowUpRight className="w-3 h-3 opacity-70" />{msgStats.sent}
             </div>
-            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-full text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-emerald-600' : 'bg-white/5 text-emerald-400'}`}>
+            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-emerald-600' : 'bg-white/5 text-emerald-400'}`}>
               <ArrowDownRight className="w-3 h-3 opacity-70" />{msgStats.received}
             </div>
-            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-full text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-rose-500' : 'bg-white/5 text-rose-400'}`}>
+            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-rose-500' : 'bg-white/5 text-rose-400'}`}>
               <AlertCircle className="w-3 h-3 opacity-70" />{msgStats.errors}
             </div>
           </div>
@@ -2578,10 +2538,10 @@ export default function MqttDebugger() {
           <div className="mb-3">
             <button
               onClick={() => setConfigCollapsed(!configCollapsed)}
-              className={`w-full flex items-center justify-between px-4 py-3 ${t.card} ${t.cardHover} rounded-xl border transition-all group`}
+              className={`w-full flex items-center justify-between px-3 py-2.5 ${t.card} ${t.cardHover} rounded-lg border transition-colors group`}
             >
               <div className="flex items-center gap-2">
-                <Server className="w-4 h-4 text-indigo-500" />
+                <Server className="w-4 h-4 text-blue-500" />
                 <span className={`text-sm font-medium ${t.textSecondary}`}>连接配置</span>
               </div>
               <div className="flex items-center gap-2">
@@ -2591,37 +2551,21 @@ export default function MqttDebugger() {
             </button>
 
             {!configCollapsed && (
-              <div className={`mt-2 p-4 ${t.card} rounded-xl border space-y-3 animate-in fade-in slide-in-from-top-2 duration-200`}>
+              <div className={`mt-2 p-3 ${t.card} rounded-lg border space-y-3 animate-in fade-in slide-in-from-top-2 duration-200`}>
                 <div className="flex gap-2">
-                   <select className={`flex-1 text-xs rounded-lg px-3 py-2 focus:border-indigo-500 ${themedSelectClass}`} onChange={handleLoadConfig} value={connection.name || ""}>
+                   <select className={`flex-1 text-xs rounded-lg px-3 py-2 focus:border-blue-500 ${themedSelectClass}`} onChange={handleLoadConfig} value={connection.name || ""}>
                      <option value="" disabled>加载预设配置...</option>
                      {savedConfigs.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                     </select>
-                    <button onClick={handleSaveConfig} title="保存配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-indigo-500 transition-colors`}><Save className="w-4 h-4"/></button>
+                    <button onClick={handleSaveConfig} title="保存配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-blue-500 transition-colors`}><Save className="w-4 h-4"/></button>
                     {connection.name && <button onClick={handleDeleteConfig} title="删除配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-rose-500 transition-colors`}><Trash2 className="w-4 h-4"/></button>}
                  </div>
 
-                 <select
-                   value={selectedPresetBroker}
-                   onChange={(e) => {
-                     const name = e.target.value;
-                     setSelectedPresetBroker(name);
-                     if (name) applyPresetBroker(name);
-                   }}
-                   disabled={connectStatus !== 'disconnected'}
-                   className={`w-full text-xs rounded-lg px-3 py-2 focus:border-indigo-500 disabled:opacity-50 ${themedSelectClass}`}
-                 >
-                   <option value="">公共服务器预设（快速填充）...</option>
-                   {PRESET_BROKERS.map((b) => (
-                     <option key={b.name} value={b.name}>{b.name}</option>
-                   ))}
-                 </select>
-
-                 <input type="text" value={connection.host} onChange={(e) => setConnection({...connection, host: e.target.value})} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Host (e.g. broker.emqx.io)"/>
+                 <input type="text" value={connection.host} onChange={(e) => setConnection({...connection, host: e.target.value})} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Host (e.g. broker.emqx.io)"/>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <input type="number" value={connection.port} onChange={(e) => handlePortChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Port"/>
-                  <select value={connection.protocol} onChange={(e) => handleProtocolChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full rounded-lg px-3 py-2 text-sm focus:border-indigo-500 disabled:opacity-50 ${themedSelectClass}`}>
+                  <input type="number" value={connection.port} onChange={(e) => handlePortChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Port"/>
+                  <select value={connection.protocol} onChange={(e) => handleProtocolChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full rounded-lg px-3 py-2 text-sm focus:border-blue-500 disabled:opacity-50 ${themedSelectClass}`}>
                     <option value="ws">ws://</option>
                     <option value="wss">wss://</option>
                     <option value="mqtt" disabled={!isDesktopShell}>mqtt://{isDesktopShell ? '' : '（桌面端）'}</option>
@@ -2641,17 +2585,17 @@ export default function MqttDebugger() {
                     value={connection.path}
                     onChange={(e) => setConnection({...connection, path: e.target.value})}
                     disabled={connectStatus === 'connected'}
-                    className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}
+                    className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all disabled:opacity-50 ${t.text}`}
                     placeholder="Path（仅 ws/wss 使用，例如 /mqtt）"
                   />
                 )}
 
                 <div className="grid grid-cols-2 gap-2">
-                  <input type="text" value={connection.username} onChange={(e) => setConnection({...connection, username: e.target.value})} disabled={connectStatus === 'connected'} placeholder="用户名" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
-                  <input type="password" value={connection.password} onChange={(e) => setConnection({...connection, password: e.target.value})} disabled={connectStatus === 'connected'} placeholder="密码" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
+                  <input type="text" value={connection.username} onChange={(e) => setConnection({...connection, username: e.target.value})} disabled={connectStatus === 'connected'} placeholder="用户名" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
+                  <input type="password" value={connection.password} onChange={(e) => setConnection({...connection, password: e.target.value})} disabled={connectStatus === 'connected'} placeholder="密码" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
                 </div>
 
-                <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-400 font-medium">
+                <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-400 font-medium">
                   {showAdvanced ? <ChevronUp className="w-3 h-3"/> : <ChevronDown className="w-3 h-3"/>} 高级设置
                 </button>
 
@@ -2673,7 +2617,7 @@ export default function MqttDebugger() {
                     </div>
                     <div className="flex items-center gap-2">
                       <label className="flex items-center gap-1 cursor-pointer">
-                        <input type="checkbox" checked={advancedConfig.clean} onChange={(e) => setAdvancedConfig({...advancedConfig, clean: e.target.checked})} className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-indigo-600"/>
+                        <input type="checkbox" checked={advancedConfig.clean} onChange={(e) => setAdvancedConfig({...advancedConfig, clean: e.target.checked})} className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-blue-600"/>
                         <span className={`text-xs ${t.textSecondary}`}>Clean Session</span>
                       </label>
                     </div>
@@ -2697,7 +2641,7 @@ export default function MqttDebugger() {
                     connectStatus !== 'connected'
                       ? reconnectCount > 0
                         ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-500/20'
-                        : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/20'
+                        : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/20'
                       : 'bg-rose-600 hover:bg-rose-500 shadow-rose-500/20'
                   } disabled:opacity-50`}
                 >
@@ -2740,7 +2684,7 @@ export default function MqttDebugger() {
             {!subscriptionsCollapsed && (
               <div className="space-y-2 mt-2">
                 <div className="flex gap-2 px-2">
-                  <input type="text" placeholder="Topic (e.g. #)" value={subTopic} onChange={(e) => setSubTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSubscribe()} className={`flex-1 ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-indigo-500 outline-none transition-all ${t.text}`}/>
+                  <input type="text" placeholder="Topic (e.g. #)" value={subTopic} onChange={(e) => setSubTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSubscribe()} className={`flex-1 ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all ${t.text}`}/>
                   <button onClick={handleSubscribe} disabled={!client?.connected} className={`${theme === 'light' ? 'bg-emerald-100 hover:bg-emerald-600 text-emerald-600 hover:text-white' : 'bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white'} px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 transition-all`}>订阅</button>
                 </div>
                 <div className="space-y-1 px-2">
@@ -2804,13 +2748,13 @@ export default function MqttDebugger() {
             onClick={() => setShowSyncModal(true)}
             className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
               isCloudConnected
-                ? `${theme === 'light' ? 'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100' : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/30'}`
+                ? `${theme === 'light' ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100' : 'bg-blue-500/20 text-blue-300 border-blue-500/30 hover:bg-blue-500/30'}`
                 : `${t.bgTertiary} ${t.textSecondary} border ${t.border} ${t.bgHover}`
             }`}
           >
             <Settings className="w-4 h-4" />
             <span>同步与备份</span>
-            {isCloudConnected && <span className={`text-[10px] px-2 py-0.5 rounded-full border ${theme === 'light' ? 'border-indigo-200 text-indigo-600' : 'border-indigo-500/30 text-indigo-300'}`}>已连接</span>}
+            {isCloudConnected && <span className={`text-[10px] px-2 py-0.5 rounded-full border ${theme === 'light' ? 'border-blue-200 text-blue-600' : 'border-blue-500/30 text-blue-300'}`}>已连接</span>}
           </button>
         </div>
       </aside>
@@ -2819,28 +2763,28 @@ export default function MqttDebugger() {
       <main className={`flex-1 flex flex-col min-w-0 ${t.bg} transition-colors duration-300`}>
 
         {/* 顶部 Header */}
-        <header className={`sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/80' : 'bg-[#0B1120]/80'} backdrop-blur-xl border-b ${t.border} px-5 py-2.5 flex items-center justify-between shrink-0`}>
+        <header className={`app-header sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#050505]/90'} border-b ${t.border} px-5 py-3 flex items-center justify-between shrink-0`}>
           <div className="flex items-center gap-3">
             <h2 className={`text-sm font-semibold ${t.text} flex items-center gap-2`}>
-              <MessageSquare className="w-4 h-4 text-indigo-500"/> 消息日志
+              <MessageSquare className="w-4 h-4 text-blue-500"/> 消息日志
             </h2>
-            <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full ${theme === 'light' ? 'text-indigo-600 bg-indigo-50' : 'text-indigo-300 bg-indigo-500/10'}`}>{filteredMessageLogs.length}</span>
+            <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full ${theme === 'light' ? 'text-blue-600 bg-blue-50' : 'text-blue-300 bg-blue-500/10'}`}>{filteredMessageLogs.length}</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative group">
-              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${t.textMuted} group-focus-within:text-indigo-500 transition-colors`} size={15} />
+              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${t.textMuted} group-focus-within:text-blue-500 transition-colors`} size={15} />
               <input
                 type="text"
                 value={logFilter}
                 onChange={e => setLogFilter(e.target.value)}
                 placeholder="搜索日志..."
                 ref={logFilterInputRef}
-                className={`pl-9 pr-4 py-1.5 ${t.bgInput} border ${t.border} rounded-full text-sm w-52 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all ${t.text} placeholder:${t.textMuted}`}
+                className={`pl-9 pr-4 py-1.5 ${t.bgInput} border ${t.border} rounded-md text-xs w-52 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${t.text} placeholder:${t.textMuted}`}
               />
             </div>
             <button
               onClick={resetStats}
-              className={`p-2 ${t.bgTertiary} border ${t.border} rounded-xl ${t.textSecondary} hover:${t.text} ${t.bgHover} transition-all`}
+              className={`p-2 ${t.bgTertiary} border ${t.border} rounded-md ${t.textSecondary} hover:${t.text} ${t.bgHover} transition-colors`}
               title="重置统计"
             >
               <RotateCcw size={18} />
@@ -2852,7 +2796,7 @@ export default function MqttDebugger() {
                 className={`relative p-2 ${t.bgTertiary} border ${t.border} rounded-xl ${t.textSecondary} hover:${t.text} ${t.bgHover} transition-all`}
               >
                 <Bell size={18} />
-                {msgStats.errors > 0 && <span className={`absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full border-2 ${theme === 'light' ? 'border-[#F8FAFC]' : 'border-[#0B1120]'}`}></span>}
+                {msgStats.errors > 0 && <span className={`absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full border-2 ${theme === 'light' ? 'border-[#F8FAFC]' : 'border-[#050505]'}`}></span>}
               </button>
             )}
           </div>
@@ -2860,22 +2804,22 @@ export default function MqttDebugger() {
 
         {/* 日志区域 */}
         <div className="flex-1 flex flex-col min-h-0 relative">
-          <div className={`px-5 py-2 ${t.bgTertiary} border-b ${t.border} flex items-center justify-end shrink-0`}>
+          <div className={`app-log-toolbar px-5 py-1.5 ${t.bgTertiary} border-b ${t.border} flex items-center justify-end shrink-0`}>
             <div className="flex items-center gap-2">
-              <button onClick={() => setLogViewMode(m => m==='text'?'hex':'text')} className={`text-xs px-3 py-1.5 rounded-lg ${t.textSecondary} ${t.bgHover} transition-colors flex items-center gap-1`}>
+              <button onClick={() => setLogViewMode(m => m==='text'?'hex':'text')} className={`text-[11px] px-2.5 py-1 rounded-md ${t.textSecondary} ${t.bgHover} transition-colors flex items-center gap-1`}>
                 <Binary className="w-3 h-3"/>{logViewMode.toUpperCase()}
               </button>
-              <button onClick={() => setIsAutoScroll(!isAutoScroll)} className={`text-xs px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 ${isAutoScroll ? (theme === 'light' ? 'text-emerald-600 bg-emerald-50' : 'text-emerald-400 bg-emerald-500/10') : (theme === 'light' ? 'text-amber-600 bg-amber-50' : 'text-amber-400 bg-amber-500/10')}`}>
+              <button onClick={() => setIsAutoScroll(!isAutoScroll)} className={`text-[11px] px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 ${isAutoScroll ? (theme === 'light' ? 'text-emerald-600 bg-emerald-50' : 'text-emerald-400 bg-emerald-500/10') : (theme === 'light' ? 'text-amber-600 bg-amber-50' : 'text-amber-400 bg-amber-500/10')}`}>
                 {isAutoScroll ? 'Auto' : 'Paused'}
               </button>
-              <button onClick={() => setLogs([])} className={`text-xs px-3 py-1.5 rounded-lg ${t.textSecondary} ${t.bgHover} transition-colors`}>
+              <button onClick={() => setLogs([])} className={`text-[11px] px-2.5 py-1 rounded-md ${t.textSecondary} ${t.bgHover} transition-colors`}>
                 <Trash2 className="w-3 h-3"/>
               </button>
             </div>
           </div>
 
           {/* 日志列表 */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 custom-scrollbar">
+          <div className="app-log-list flex-1 overflow-y-auto px-5 py-4 space-y-3 custom-scrollbar">
             {filteredMessageLogs.length === 0 ? (
               <div className={`flex flex-col items-center justify-center h-full ${t.textMuted}`}>
                 <MessageSquare className="w-12 h-12 mb-3 opacity-30" />
@@ -2892,34 +2836,34 @@ export default function MqttDebugger() {
         </div>
 
         {/* 发布区域 */}
-        <div className={`shrink-0 border-t ${t.border} ${t.bgSecondary} backdrop-blur-xl ${theme === 'light' ? 'shadow-[0_-4px_20px_rgba(0,0,0,0.05)]' : 'shadow-[0_-4px_20px_rgba(0,0,0,0.3)]'} z-10 transition-colors duration-300`}>
-          <div className="p-4 space-y-3">
+        <div className={`app-publish-bar shrink-0 border-t ${t.border} ${theme === 'light' ? 'bg-white' : 'bg-[#121212]'} z-10 transition-colors duration-300`}>
+          <div className="p-3 space-y-2.5">
 
             {/* 第一行：Topic 和选项 */}
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <input
                 type="text"
                 value={pubTopic}
                 onChange={(e) => setPubTopic(e.target.value)}
-                className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm font-mono focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all ${t.text}`}
+                className={`flex-1 min-w-[180px] ${t.bgInput} border ${t.border} rounded-md px-3 py-2 text-sm font-mono focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all ${t.text}`}
                 placeholder="Topic (e.g. test/topic)"
               />
 
-              <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2`}>
+              <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-md px-3 py-2`}>
                 <select value={pubQoS} onChange={(e) => setPubQoS(Number(e.target.value))} className={`bg-transparent text-xs outline-none ${t.textSecondary}`}>
                   <option value={0}>QoS 0</option>
                   <option value={1}>QoS 1</option>
                   <option value={2}>QoS 2</option>
                 </select>
-                <div className={`w-px h-4 ${theme === 'light' ? 'bg-slate-200' : 'bg-slate-700'}`}></div>
+                <div className={`w-px h-4 ${theme === 'light' ? 'bg-slate-200' : 'bg-gray-800'}`}></div>
                 <label className={`flex items-center gap-1.5 text-xs ${t.textSecondary} cursor-pointer`}>
-                  <input type="checkbox" checked={pubRetain} onChange={e => setPubRetain(e.target.checked)} className="rounded bg-slate-200 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-indigo-600 w-3.5 h-3.5"/>
+                  <input type="checkbox" checked={pubRetain} onChange={e => setPubRetain(e.target.checked)} className="rounded bg-slate-200 dark:bg-[#0A0A0A] border-slate-300 dark:border-gray-700 text-blue-600 w-3.5 h-3.5"/>
                   Retain
                 </label>
               </div>
 
               {/* 定时发送 */}
-              <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2`}>
+              <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-md px-3 py-2`}>
                 <Timer className={`w-4 h-4 ${t.textMuted}`}/>
                 <input
                   type="number"
@@ -2948,20 +2892,20 @@ export default function MqttDebugger() {
                   theme === 'light'
                     ? 'text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100'
                     : 'text-amber-300 border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20'
-                } border px-3 py-2 rounded-xl transition-all`}
+                } border px-3 py-2 rounded-md transition-colors`}
                 title="打开快捷指令面板"
               >
                 <Zap className="w-3.5 h-3.5"/> 快捷指令
                 <span className={`ml-1 text-[10px] font-semibold ${theme === 'light' ? 'text-amber-600' : 'text-amber-300/80'}`}>{quickActions.length}</span>
               </button>
 
-              <button onClick={handleSaveAction} className={`flex items-center gap-1.5 text-xs font-medium ${theme === 'light' ? 'text-indigo-600 border-indigo-200 bg-indigo-50 hover:bg-indigo-100' : 'text-indigo-400 border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20'} border px-3 py-2 rounded-xl transition-all`}>
+              <button onClick={handleSaveAction} className={`flex items-center gap-1.5 text-xs font-medium ${theme === 'light' ? 'text-blue-600 border-blue-200 bg-blue-50 hover:bg-blue-100' : 'text-blue-400 border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20'} border px-3 py-2 rounded-md transition-colors`}>
                 <Plus className="w-3.5 h-3.5"/> 存为指令
               </button>
             </div>
 
             {timerEnabled && (
-              <div className={`rounded-xl border px-3 py-2.5 ${theme === 'light' ? 'bg-emerald-50/80 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
+              <div className={`rounded-md border px-3 py-2 ${theme === 'light' ? 'bg-emerald-50/80 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
                 <div className="flex items-center justify-between gap-3 mb-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <Timer className={`${theme === 'light' ? 'text-emerald-600' : 'text-emerald-300'} w-4 h-4 shrink-0`} />
@@ -2973,7 +2917,7 @@ export default function MqttDebugger() {
                     {formatTimerCountdown(timerRemainingMs)} 后发送
                   </div>
                 </div>
-                <div className={`h-2 rounded-full overflow-hidden ${theme === 'light' ? 'bg-emerald-100' : 'bg-slate-800/80'}`}>
+                <div className={`h-2 rounded-full overflow-hidden ${theme === 'light' ? 'bg-emerald-100' : 'bg-white/5'}`}>
                   <div
                     className={`h-full rounded-full transition-[width] duration-100 ${theme === 'light' ? 'bg-emerald-500' : 'bg-emerald-400'}`}
                     style={{ width: `${timerProgress}%` }}
@@ -2986,7 +2930,7 @@ export default function MqttDebugger() {
               </div>
             )}
 
-            <div className={`flex items-center gap-2 ${t.bgTertiary} border ${t.border} rounded-xl px-3 py-2 overflow-x-auto custom-scrollbar`}>
+            <div className={`flex items-center gap-2 ${t.bgTertiary} border ${t.border} rounded-md px-3 py-1.5 overflow-x-auto custom-scrollbar`}>
               <div className={`text-xs font-semibold ${t.textMuted} shrink-0 flex items-center gap-1`}>
                 <Star className="w-3.5 h-3.5" />
                 常用
@@ -2997,7 +2941,7 @@ export default function MqttDebugger() {
                     key={actionIdKey(action?.id) || action.name}
                     type="button"
                     onClick={() => sendQuickAction(action, { closePanel: false })}
-                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                    className={`shrink-0 px-3 py-1 rounded-md text-xs font-bold border transition-colors ${
                       theme === 'light'
                         ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
                         : 'bg-amber-500/10 text-amber-200 border-amber-500/20 hover:bg-amber-500/20'
@@ -3012,7 +2956,7 @@ export default function MqttDebugger() {
                     key={`common-empty-${idx}`}
                     type="button"
                     onClick={() => setShowQuickActionsPanel(true)}
-                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${t.bgSecondary} ${t.textSecondary} ${t.bgHover} ${t.border}`}
+                    className={`shrink-0 px-3 py-1 rounded-md text-xs font-semibold border transition-colors ${t.bgSecondary} ${t.textSecondary} ${t.bgHover} ${t.border}`}
                     title="添加常用（置顶或最近使用会出现在这里）"
                   >
                     添加
@@ -3022,13 +2966,13 @@ export default function MqttDebugger() {
             </div>
 
             {/* 消息输入和发送 */}
-            <div className="flex gap-3">
+            <div className="flex gap-2">
               <div className="flex-1 min-w-0 relative">
                 <textarea
                   ref={pubMessageTextareaRef}
                   value={pubMessage}
                   onChange={(e) => setPubMessage(e.target.value)}
-                  className={`payload-textarea custom-scrollbar w-full ${t.bgInput} border ${t.border} rounded-xl px-4 pr-14 py-3 text-sm font-mono resize-y focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all h-24 min-h-[96px] max-h-[38vh] overflow-y-auto ${t.text}`}
+                  className={`payload-textarea custom-scrollbar w-full ${t.bgInput} border ${t.border} rounded-md px-3 pr-12 py-2.5 text-sm font-mono resize-y focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all h-20 min-h-[80px] max-h-[38vh] overflow-y-auto ${t.text}`}
                   placeholder='Payload (e.g. {"msg": "Hello"})'
                 />
                 <button
@@ -3043,11 +2987,11 @@ export default function MqttDebugger() {
               <button
                 onClick={handlePublish}
                 disabled={!client?.connected}
-                className="w-24 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/30"
+                className="w-16 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-bold disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1 transition-colors"
               >
                 <Send className="w-5 h-5"/>
                 <span className="text-xs">发送</span>
-                <span className="text-[10px] text-indigo-200 opacity-70">Ctrl+Enter</span>
+                <span className="text-[10px] text-blue-100 opacity-80">Ctrl+Enter</span>
               </button>
             </div>
           </div>
@@ -3091,13 +3035,13 @@ export default function MqttDebugger() {
 
               <div className={`p-4 border-b ${t.border} space-y-2`}>
                 <div className="relative group">
-                  <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${t.textMuted} group-focus-within:text-indigo-500 transition-colors`} size={16} />
+                  <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${t.textMuted} group-focus-within:text-blue-500 transition-colors`} size={16} />
                   <input
                     type="text"
                     value={eventFilter}
                     onChange={(e) => setEventFilter(e.target.value)}
                     placeholder="搜索事件..."
-                    className={`pl-9 pr-4 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm w-full focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all ${t.text} placeholder:${t.textMuted}`}
+                    className={`pl-9 pr-4 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${t.text} placeholder:${t.textMuted}`}
                   />
                 </div>
                 <div className={`text-[10px] ${t.textMuted}`}>
@@ -3152,22 +3096,22 @@ export default function MqttDebugger() {
       <style>{`
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: ${theme === 'light' ? '#cbd5e1' : '#334155'}; border-radius: 3px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: ${theme === 'light' ? '#94a3b8' : '#475569'}; }
+         .custom-scrollbar::-webkit-scrollbar-thumb { background: ${theme === 'light' ? '#cbd5e1' : 'rgba(156,163,175,0.2)'}; border-radius: 3px; }
+         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: ${theme === 'light' ? '#94a3b8' : 'rgba(156,163,175,0.4)'}; }
         .connection-config-scroll { scrollbar-gutter: stable; }
         .connection-config-scroll::-webkit-scrollbar { width: 8px; }
         .connection-config-scroll::-webkit-scrollbar-track {
-          background: ${theme === 'light' ? 'rgba(241,245,249,0.9)' : 'rgba(15,23,42,0.7)'};
+           background: ${theme === 'light' ? 'rgba(241,245,249,0.9)' : 'rgba(10,10,10,0.8)'};
           border-radius: 999px;
         }
         .connection-config-scroll::-webkit-scrollbar-thumb {
-          background: ${theme === 'light' ? '#94a3b8' : '#475569'};
+           background: ${theme === 'light' ? '#94a3b8' : 'rgba(156,163,175,0.2)'};
           border-radius: 999px;
           border: 2px solid transparent;
           background-clip: padding-box;
         }
         .connection-config-scroll::-webkit-scrollbar-thumb:hover {
-          background: ${theme === 'light' ? '#64748b' : '#64748b'};
+           background: ${theme === 'light' ? '#64748b' : 'rgba(156,163,175,0.4)'};
         }
         .themed-select {
           appearance: none;
@@ -3182,8 +3126,8 @@ export default function MqttDebugger() {
         }
         .themed-select option,
         .themed-select optgroup {
-          background: ${theme === 'light' ? '#ffffff' : '#0f172a'};
-          color: ${theme === 'light' ? '#0f172a' : '#e2e8f0'};
+           background: ${theme === 'light' ? '#ffffff' : '#0A0A0A'};
+           color: ${theme === 'light' ? '#0f172a' : '#d1d5db'};
         }
         .themed-select:disabled {
           cursor: not-allowed;
@@ -3192,15 +3136,15 @@ export default function MqttDebugger() {
         .payload-textarea { scrollbar-gutter: stable; }
         .payload-textarea::-webkit-scrollbar { width: 10px; }
         .payload-textarea::-webkit-scrollbar-thumb {
-          background: ${theme === 'light' ? '#94a3b8' : '#475569'};
+           background: ${theme === 'light' ? '#94a3b8' : 'rgba(156,163,175,0.2)'};
           border-radius: 999px;
           border: 2px solid transparent;
           background-clip: padding-box;
         }
-        .payload-textarea::-webkit-scrollbar-thumb:hover { background: ${theme === 'light' ? '#64748b' : '#64748b'}; }
+         .payload-textarea::-webkit-scrollbar-thumb:hover { background: ${theme === 'light' ? '#64748b' : 'rgba(156,163,175,0.4)'}; }
         .payload-textarea::-webkit-resizer {
           background:
-            linear-gradient(135deg, transparent 0 58%, ${theme === 'light' ? '#cbd5e1' : '#475569'} 58% 66%, transparent 66% 74%, ${theme === 'light' ? '#94a3b8' : '#64748b'} 74% 82%, transparent 82% 100%);
+            linear-gradient(135deg, transparent 0 58%, ${theme === 'light' ? '#cbd5e1' : 'rgba(156,163,175,0.2)'} 58% 66%, transparent 66% 74%, ${theme === 'light' ? '#94a3b8' : 'rgba(156,163,175,0.4)'} 74% 82%, transparent 82% 100%);
         }
         @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
         @keyframes slide-in-from-bottom-2 { from { transform: translateY(8px); } to { transform: translateY(0); } }
