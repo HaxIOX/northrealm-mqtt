@@ -6,7 +6,7 @@ const args = new Set(process.argv.slice(2));
 const shouldKill = args.has('--kill');
 
 function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getProductExeName() {
@@ -20,30 +20,42 @@ function getProductExeName() {
   }
 }
 
-function isProcessRunning(imageName) {
+// Only instances started from the directory about to be cleaned (release/win-unpacked) lock it.
+// An installed copy (under AppData) does not affect packaging and must neither block nor be killed.
+// Returns null when the query itself fails (e.g. wmic unavailable): the caller then does not block.
+function findRunningFromDir(imageName, dir) {
   try {
-    const out = execSync('tasklist', { encoding: 'utf8' });
-    return out.toLowerCase().includes(imageName.toLowerCase());
+    const out = execSync(
+      `wmic process where "name='${imageName}'" get ExecutablePath,ProcessId /format:csv`,
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const base = path.resolve(dir).toLowerCase() + path.sep;
+    return out
+      .split(/\r?\n/)
+      .map((line) => line.trim().split(','))
+      .filter((cols) => cols.length >= 3 && /^\d+$/.test(cols[cols.length - 1]))
+      .map((cols) => ({ exePath: cols[cols.length - 2], pid: cols[cols.length - 1] }))
+      .filter((proc) => proc.exePath.toLowerCase().startsWith(base));
   } catch {
-    return false;
+    return null;
   }
 }
 
-function killProcess(imageName) {
-  execSync(`taskkill /IM "${imageName}" /F`, { stdio: 'inherit' });
+function killPid(pid) {
+  execSync(`taskkill /PID ${pid} /F`, { stdio: 'inherit' });
 }
 
 async function ensureRemovableDir(dirPath, retries = 10) {
   if (!fs.existsSync(dirPath)) return;
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
       fs.rmSync(dirPath, { recursive: true, force: true });
       return;
-    } catch (e) {
-      const code = e && typeof e === 'object' ? e.code : undefined;
+    } catch (error) {
+      const code = error && typeof error === 'object' ? error.code : undefined;
       const mayBeLocked = code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
-      if (!mayBeLocked || attempt === retries) throw e;
+      if (!mayBeLocked || attempt === retries) throw error;
       await sleep(500);
     }
   }
@@ -52,35 +64,37 @@ async function ensureRemovableDir(dirPath, retries = 10) {
 (async () => {
   if (process.platform !== 'win32') return;
 
+  // electron-builder runs with TEMP/TMP pointing at ./.tmp (see package.json desktop:build).
+  // Some machines only let executables located under the Desktop folder write inside that folder.
+  // The NSIS installer stub must write the uninstaller into TEMP; when %TEMP% is refused, the build fails
+  // with "Command failed: Northrealm Setup x.y.z.exe" (exit code 2). A project-local .tmp avoids that.
+  fs.mkdirSync(path.join(process.cwd(), '.tmp'), { recursive: true });
+
   const exeName = getProductExeName();
   const unpackedDir = path.join(process.cwd(), 'release', 'win-unpacked');
 
-  if (isProcessRunning(exeName)) {
+  // A failed query (null) does not block: if the directory really is locked,
+  // ensureRemovableDir below reports a precise error.
+  const running = findRunningFromDir(exeName, unpackedDir) || [];
+  if (running.length > 0) {
     if (shouldKill) {
-      // eslint-disable-next-line no-console
-      console.log(`[prep] 检测到正在运行的进程: ${exeName}，正在结束...`);
-      killProcess(exeName);
+      console.log(`[prep] Found ${running.length} ${exeName} process(es) running from ${unpackedDir}. Stopping them before packaging.`);
+      running.forEach((proc) => killPid(proc.pid));
       await sleep(500);
     } else {
-      // eslint-disable-next-line no-console
-      console.error(`❌ 桌面打包失败前置检查：检测到 ${exeName} 正在运行。`);
-      // eslint-disable-next-line no-console
-      console.error('   请先关闭正在运行的桌面程序（尤其是从 release/win-unpacked 运行的版本），再执行 `npm run desktop:build`。');
-      // eslint-disable-next-line no-console
-      console.error('   或使用 `npm run desktop:build:kill` 自动结束进程。');
+      console.error(`Desktop build blocked: ${exeName} is running from ${unpackedDir} and locks the output directory.`);
+      console.error('Close it and rerun `npm run desktop:build`, or use `npm run desktop:build:kill` to stop those processes.');
+      console.error('An installed copy (under AppData) is not affected and does not need to be closed.');
       process.exit(1);
     }
   }
 
   try {
     await ensureRemovableDir(unpackedDir, 15);
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error(`❌ 无法清理输出目录（可能被占用/权限不足）：${unpackedDir}`);
-    // eslint-disable-next-line no-console
-    console.error(`   具体错误: ${String(e?.message || e)}`);
-    // eslint-disable-next-line no-console
-    console.error('   处理建议：关闭 Northrealm、关闭打开了 win-unpacked 的资源管理器窗口/预览、或重启后再打包。');
+  } catch (error) {
+    console.error(`Failed to clean output directory: ${unpackedDir}`);
+    console.error(`Error: ${String(error?.message || error)}`);
+    console.error('Close Northrealm and any Explorer window opened inside win-unpacked, then retry the build.');
     process.exit(1);
   }
 })();

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Northrealm</string>
+    <string name="title_activity_main">Northrealm</string>
+    <string name="package_name">com.vibtek.northrealm</string>
+    <string name="custom_url_scheme">com.vibtek.northrealm</string>
+</resources>

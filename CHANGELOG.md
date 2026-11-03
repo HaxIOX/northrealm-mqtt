@@ -2,7 +2,16 @@
 
 ## Unreleased
 
-- (TBD)
+- Refactor: extract monolithic App.jsx into modular components and contexts (ThemeContext, MqttContext, AppDataContext, Sidebar, LogArea, PublishBar, ConnectionPanel, etc.)
+- Feature: template quick actions — use `{{varName}}` placeholders in topic/payload, fill form at send time with history autocomplete
+- Feature: template variable rendering — variables displayed as highlighted tags instead of raw `{{}}` braces
+- Feature: "fill to send area" for template actions — resolves empty vars, positions cursor at first variable slot
+- Feature: topic input autocomplete in publish bar — dropdown from session log topics with segment-aware matching
+- Feature: edit quick action fields (name, topic, payload, QoS, retain) via inline form
+- Feature: filter retained messages — suppress broker retained messages by default, add "show Retained" toggle in advanced settings
+- Feature: retained message badge — `⚠️ Retained` indicator on received messages when "show Retained" is enabled
+- Fix: auto-correct protocol/port mismatch in connection config
+- Fix: duplicate message/log suppression and duplicate subscription prevention
 
 ## 0.1.6 - 2026-02-07
 
