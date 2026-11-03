@@ -24,3 +24,13 @@ release
 *.njsproj
 *.sln
 *.sw?
+
+# 本地工具链与打包产物
+tools/
+Northrealm-*-win/
+Northrealm-*-win.zip
+nr_run.log
+android/**/build/
+android/.gradle/
+android/local.properties
+.cursor/

@@ -46,6 +46,8 @@ async function waitForDevServer() {
     ['electron/main.cjs'],
     {
       stdio: 'inherit',
+      // Windows 下 electron 是 .cmd 包装，不经 shell 无法启动（ENOENT）
+      shell: process.platform === 'win32',
       env: {
         ...process.env,
         VITE_DEV_SERVER_URL: DEV_URL,
