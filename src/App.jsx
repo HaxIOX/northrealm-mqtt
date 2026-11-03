@@ -1511,6 +1511,7 @@ export default function MqttDebugger() {
     client.subscribe(subTopic, (e) => {
       if (e) { addLog('error', subTopic, '订阅失败'); return; }
       updateSubscriptions((prev) => (prev.includes(subTopic) ? prev : [...prev, subTopic]));
+      setSubscriptionsCollapsed(false);
       addLog('system', subTopic, '订阅成功');
     });
   };
@@ -1651,7 +1652,7 @@ export default function MqttDebugger() {
   // Formatters
   const formatDuration = (s) => `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
 
-  // KISS: 仅支持 MQTT 常见通配符（+ / #），用于订阅监控的"按主题筛选"。
+  // KISS: 仅支持 MQTT 常见通配符（+ / #），用于订阅主题列表的"按主题筛选"。
   const mqttTopicMatches = (filter, topic) => {
     const f = String(filter || '');
     const t = String(topic || '');
@@ -2573,10 +2574,10 @@ export default function MqttDebugger() {
               type="button"
               onClick={() => setSubscriptionsCollapsed((v) => !v)}
               className="w-full flex items-center justify-between group py-1.5 mb-1"
-              title={subscriptionsCollapsed ? '展开订阅' : '收起订阅'}
+              title={subscriptionsCollapsed ? '展开订阅列表' : '收起订阅列表'}
             >
               <div className="flex items-center gap-2 font-bold text-[13px] text-[#333D4F] dark:text-[#E6EDF3]">
-                <span>订阅监控</span>
+                <span>订阅主题</span>
               </div>
               <div className="flex items-center gap-2">
                 {subscriptionsCollapsed ? (
@@ -2587,9 +2588,49 @@ export default function MqttDebugger() {
               </div>
             </button>
 
+            {/* New Topic：放在最上面，折叠订阅列表时也可见；输入框就地替换按钮 */}
+            <div className="mt-1">
+              {newTopicOpen ? (
+                <div
+                  className="animate-in fade-in duration-150"
+                  onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setNewTopicOpen(false); }}
+                >
+                  <div className={`flex items-center ${t.bgInput} border ${t.border} rounded-lg overflow-hidden focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all`}>
+                    <input
+                      ref={subTopicInputRef}
+                      type="text"
+                      placeholder="Topic，如 # 或 a/b/+"
+                      aria-label="订阅 Topic"
+                      value={subTopic}
+                      onChange={(e) => setSubTopic(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { handleSubscribe(); setNewTopicOpen(false); }
+                        else if (e.key === 'Escape') setNewTopicOpen(false);
+                      }}
+                      className={`flex-1 min-w-0 bg-transparent px-2.5 py-2 text-xs font-mono outline-none ${t.text}`}
+                    />
+                    <button
+                      onClick={() => { handleSubscribe(); setNewTopicOpen(false); }}
+                      disabled={!client?.connected}
+                      className="shrink-0 bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      订阅
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { setNewTopicOpen(true); setTimeout(() => subTopicInputRef.current?.focus(), 0); }}
+                  className="w-full py-2.5 border-2 border-dashed border-blue-500/30 dark:border-blue-300/30 rounded-xl text-[12px] font-bold text-blue-500 dark:text-blue-300 hover:bg-blue-500/10 dark:hover:bg-blue-300/10 transition-all flex items-center justify-center gap-2"
+                >
+                  <Plus size={15} strokeWidth={2.5}/> New Topic
+                </button>
+              )}
+            </div>
+
             {!subscriptionsCollapsed && (
-              <div className="space-y-2 mt-2">
-                <div className="space-y-1 px-2">
+              <div className="space-y-1 px-2 mt-3">
                   {subMonitorSelectedTopics.length > 0 && (
                     <button
                       type="button"
@@ -2627,43 +2668,6 @@ export default function MqttDebugger() {
                     );
                   })}
                   {subscriptions.length === 0 && <div className={`text-xs ${t.textMuted} text-center py-4 border border-dashed ${t.border} rounded-xl`}>暂无订阅</div>}
-                </div>
-                {newTopicOpen && (
-                  <div
-                    className="px-2 animate-in fade-in slide-in-from-top-2 duration-200"
-                    onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setNewTopicOpen(false); }}
-                  >
-                    <div className={`flex items-center ${t.bgInput} border ${t.border} rounded-lg overflow-hidden focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all`}>
-                      <input
-                        ref={subTopicInputRef}
-                        type="text"
-                        placeholder="Topic，如 # 或 a/b/+"
-                        aria-label="订阅 Topic"
-                        value={subTopic}
-                        onChange={(e) => setSubTopic(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') { handleSubscribe(); setNewTopicOpen(false); }
-                          else if (e.key === 'Escape') setNewTopicOpen(false);
-                        }}
-                        className={`flex-1 min-w-0 bg-transparent px-2.5 py-1.5 text-xs font-mono outline-none ${t.text}`}
-                      />
-                      <button
-                        onClick={() => { handleSubscribe(); setNewTopicOpen(false); }}
-                        disabled={!client?.connected}
-                        className="shrink-0 bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        订阅
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => { setNewTopicOpen(true); setTimeout(() => subTopicInputRef.current?.focus(), 0); }}
-                  className="w-full mt-1 py-2.5 border-2 border-dashed border-blue-500/30 dark:border-blue-300/30 rounded-xl text-[12px] font-bold text-blue-500 dark:text-blue-300 hover:bg-blue-500/10 dark:hover:bg-blue-300/10 transition-all flex items-center justify-center gap-2"
-                >
-                  <Plus size={15} strokeWidth={2.5}/> New Topic
-                </button>
               </div>
             )}
           </div>
