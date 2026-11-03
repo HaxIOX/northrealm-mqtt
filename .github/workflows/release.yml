@@ -85,6 +85,11 @@ jobs:
           java-version: '21'
           cache: gradle
       - uses: android-actions/setup-android@v3
+        with:
+          # The default ("tools platform-tools") fails on current runner images because the legacy
+          # "tools" package no longer exists in cmdline-tools. The runner already ships the SDK and
+          # Gradle downloads what the build needs once the licenses are accepted (done by this action).
+          packages: ''
       - name: Install dependencies
         run: npm ci
       - name: Sync Android project
