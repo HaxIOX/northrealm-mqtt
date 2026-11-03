@@ -77,7 +77,7 @@ if (!gotLock) {
     logMain('createWindow', { preloadPath, preloadExists: fs.existsSync(preloadPath) });
 
     const state = loadWindowState();
-    const winIcon = path.join(__dirname, '..', 'build', 'icon.png');
+    const winIcon = path.join(__dirname, '..', 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 
     mainWindow = new BrowserWindow({
       ...state,
