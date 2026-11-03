@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- MQTT 心跳波形：单次干净脉冲（基线 + 一个利落尖峰），品牌蓝 -->
+  <path d="M 120 640 L 424 640 L 492 200 L 560 860 L 628 640 L 904 640"
+        fill="none" stroke="#2563EB" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

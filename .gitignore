@@ -12,6 +12,7 @@ dist
 dist-ssr
 release
 tools
+.tmp
 *.local
 .claude
 

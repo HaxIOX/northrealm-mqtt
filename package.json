@@ -16,8 +16,8 @@
     "verify:desktop": "npm run verify && npm run desktop:build",
     "preview": "vite preview",
     "desktop:dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"npm:dev\" \"node scripts/electron-dev.cjs\"",
-    "desktop:build": "npm run build && node scripts/desktop-build-prep.cjs && set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/&& electron-builder --win --publish never",
-    "desktop:build:kill": "npm run build && node scripts/desktop-build-prep.cjs --kill && set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/&& electron-builder --win --publish never",
+    "desktop:build": "npm run build && node scripts/desktop-build-prep.cjs && node scripts/gen-icon.cjs && set TEMP=%CD%\\.tmp&& set TMP=%CD%\\.tmp&& set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/&& electron-builder --win --publish never",
+    "desktop:build:kill": "npm run build && node scripts/desktop-build-prep.cjs --kill && node scripts/gen-icon.cjs && set TEMP=%CD%\\.tmp&& set TMP=%CD%\\.tmp&& set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/&& electron-builder --win --publish never",
     "desktop:portable": "npm run desktop:build && node scripts/portable-zip.cjs",
     "android:sync": "npm run build && npx cap sync android"
   },
@@ -44,9 +44,11 @@
     "firebase": "^12.7.0",
     "globals": "^16.5.0",
     "lucide-react": "^0.562.0",
+    "png-to-ico": "^3.0.2",
     "postcss": "^8.5.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "sharp": "^0.35.3",
     "tailwindcss": "^3.4.19",
     "vite": "^7.2.4"
   },
@@ -68,10 +70,17 @@
       "output": "release"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ],
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "language": "2052"
     }
   },
   "keywords": [

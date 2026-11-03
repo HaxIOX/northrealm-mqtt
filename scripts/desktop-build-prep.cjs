@@ -20,17 +20,29 @@ function getProductExeName() {
   }
 }
 
-function isProcessRunning(imageName) {
+// Only instances started from the directory about to be cleaned (release/win-unpacked) lock it.
+// An installed copy (under AppData) does not affect packaging and must neither block nor be killed.
+// Returns null when the query itself fails (e.g. wmic unavailable): the caller then does not block.
+function findRunningFromDir(imageName, dir) {
   try {
-    const out = execSync('tasklist', { encoding: 'utf8' });
-    return out.toLowerCase().includes(imageName.toLowerCase());
+    const out = execSync(
+      `wmic process where "name='${imageName}'" get ExecutablePath,ProcessId /format:csv`,
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const base = path.resolve(dir).toLowerCase() + path.sep;
+    return out
+      .split(/\r?\n/)
+      .map((line) => line.trim().split(','))
+      .filter((cols) => cols.length >= 3 && /^\d+$/.test(cols[cols.length - 1]))
+      .map((cols) => ({ exePath: cols[cols.length - 2], pid: cols[cols.length - 1] }))
+      .filter((proc) => proc.exePath.toLowerCase().startsWith(base));
   } catch {
-    return false;
+    return null;
   }
 }
 
-function killProcess(imageName) {
-  execSync(`taskkill /IM "${imageName}" /F`, { stdio: 'inherit' });
+function killPid(pid) {
+  execSync(`taskkill /PID ${pid} /F`, { stdio: 'inherit' });
 }
 
 async function ensureRemovableDir(dirPath, retries = 10) {
@@ -52,18 +64,27 @@ async function ensureRemovableDir(dirPath, retries = 10) {
 (async () => {
   if (process.platform !== 'win32') return;
 
+  // electron-builder runs with TEMP/TMP pointing at ./.tmp (see package.json desktop:build).
+  // Some machines only let executables located under the Desktop folder write inside that folder.
+  // The NSIS installer stub must write the uninstaller into TEMP; when %TEMP% is refused, the build fails
+  // with "Command failed: Northrealm Setup x.y.z.exe" (exit code 2). A project-local .tmp avoids that.
+  fs.mkdirSync(path.join(process.cwd(), '.tmp'), { recursive: true });
+
   const exeName = getProductExeName();
   const unpackedDir = path.join(process.cwd(), 'release', 'win-unpacked');
 
-  if (isProcessRunning(exeName)) {
+  // A failed query (null) does not block: if the directory really is locked,
+  // ensureRemovableDir below reports a precise error.
+  const running = findRunningFromDir(exeName, unpackedDir) || [];
+  if (running.length > 0) {
     if (shouldKill) {
-      console.log(`[prep] Detected running process: ${exeName}. Stopping it before packaging.`);
-      killProcess(exeName);
+      console.log(`[prep] Found ${running.length} ${exeName} process(es) running from ${unpackedDir}. Stopping them before packaging.`);
+      running.forEach((proc) => killPid(proc.pid));
       await sleep(500);
     } else {
-      console.error(`Desktop build blocked: detected running process ${exeName}.`);
-      console.error('Close the running desktop app, especially anything started from release/win-unpacked, then rerun `npm run desktop:build`.');
-      console.error('Or use `npm run desktop:build:kill` to stop the process automatically.');
+      console.error(`Desktop build blocked: ${exeName} is running from ${unpackedDir} and locks the output directory.`);
+      console.error('Close it and rerun `npm run desktop:build`, or use `npm run desktop:build:kill` to stop those processes.');
+      console.error('An installed copy (under AppData) is not affected and does not need to be closed.');
       process.exit(1);
     }
   }
