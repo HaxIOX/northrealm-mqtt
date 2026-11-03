@@ -73,7 +73,28 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
-> 说明：打包后的 Windows 程序显示名来自 `package.json` 的 `build.productName`（当前为 `Northrealm`）。后续如需进一步统一图标/签名等，可再补齐。
+> 说明：打包后的 Windows 程序显示名来自 `package.json` 的 `build.productName`（当前为 `Northrealm`）。
+>
+> 产物（`release/`）：
+> - `Northrealm Setup x.y.z.exe`：安装版，安装时可选择安装目录
+> - `Northrealm-portable-x.y.z-win-x64.zip`：便携版，解压即用
+
+## 项目结构
+
+```text
+src/             前端（Web 与桌面共用）
+  main.jsx         入口
+  App.jsx          主界面与 MQTT 逻辑
+  index.css        全局样式（Tailwind）
+  lib/runtime.js   运行环境探测（Web / 桌面）
+electron/        桌面端：main.cjs 主进程，preload.cjs 注入 mqtt
+public/          静态资源（本地字体、favicon）
+build/           打包图标（icon.svg 为母版，icon.ico / icon.png 由脚本生成）
+scripts/         开发与打包脚本（electron-dev、desktop-build-prep、gen-icon、test-mqtt）
+docs/            开发日志、设计稿（design/）
+.github/         CI / Release 工作流、Issue 模板
+dist/ release/   构建产物（已忽略）
+```
 
 ## 公共 Broker 预设（示例）
 

@@ -70,6 +70,28 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
+Output in `release/`:
+
+- `Northrealm Setup x.y.z.exe`: installer (you can choose the install directory)
+- `Northrealm-portable-x.y.z-win-x64.zip`: portable build, unzip and run
+
+## Project structure
+
+```text
+src/             Frontend (shared by Web and Desktop)
+  main.jsx         Entry
+  App.jsx          Main UI and MQTT logic
+  index.css        Global styles (Tailwind)
+  lib/runtime.js   Runtime detection (Web / Desktop)
+electron/        Desktop: main.cjs (main process), preload.cjs (injects mqtt)
+public/          Static assets (local fonts, favicon)
+build/           Packaging icons (icon.svg is the master; icon.ico / icon.png are generated)
+scripts/         Dev and packaging scripts (electron-dev, desktop-build-prep, gen-icon, test-mqtt)
+docs/            Dev log, design drafts (design/)
+.github/         CI / Release workflows, issue templates
+dist/ release/   Build output (git-ignored)
+```
+
 ## Roadmap 🧭
 
 > Note: dates are estimates and may change.
