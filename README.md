@@ -91,7 +91,6 @@ electron/        桌面端：main.cjs 主进程，preload.cjs 注入 mqtt
 public/          静态资源（本地字体、favicon）
 build/           打包图标（icon.svg 为母版，icon.ico / icon.png 由脚本生成）
 scripts/         开发与打包脚本（electron-dev、desktop-build-prep、gen-icon、test-mqtt）
-docs/            开发日志、设计稿（design/）
 .github/         CI / Release 工作流、Issue 模板
 dist/ release/   构建产物（已忽略）
 ```

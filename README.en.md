@@ -87,7 +87,6 @@ electron/        Desktop: main.cjs (main process), preload.cjs (injects mqtt)
 public/          Static assets (local fonts, favicon)
 build/           Packaging icons (icon.svg is the master; icon.ico / icon.png are generated)
 scripts/         Dev and packaging scripts (electron-dev, desktop-build-prep, gen-icon, test-mqtt)
-docs/            Dev log, design drafts (design/)
 .github/         CI / Release workflows, issue templates
 dist/ release/   Build output (git-ignored)
 ```

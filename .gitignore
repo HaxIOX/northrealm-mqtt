@@ -33,8 +33,11 @@ nr_run.log
 .tmp/
 android/
 
+# 本地文档（开发日志、设计稿、更新记录等，不进仓库；面向使用者的说明写在 README）
+docs/
+CHANGELOG.md
+
 # Trellis 工作流与 AI 助手配置（仅本地使用）
 .trellis/
 AGENTS.md
-docs/trellis-plan.md
 .cursor/
