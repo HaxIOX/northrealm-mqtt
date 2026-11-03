@@ -74,12 +74,6 @@ select:focus-visible {
     box-shadow: 1px 0 0 rgba(15, 23, 42, 0.02);
   }
 
-  .app-header,
-  .app-publish-bar {
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-  }
-
   .app-log-toolbar {
     min-height: 44px;
   }

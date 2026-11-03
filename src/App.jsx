@@ -174,7 +174,7 @@ const LogItem = React.memo(function LogItem({ log, theme, logViewMode, onEdit })
           <CopyButton text={log.payload} title="复制 Payload" className={`p-1 ${hoverBtn} rounded-lg transition-colors`} />
         </div>
       </div>
-      <pre className="text-[13px] leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap break-all">
+      <pre className={`text-[13px] leading-relaxed overflow-x-auto whitespace-pre-wrap ${isSent || isReceived ? 'font-mono break-all' : 'font-sans break-words'}`}>
         {logViewMode === 'hex' ? (
           <span className={theme === 'light' ? 'text-purple-600' : 'text-gray-400'}>{toHex(log.payload)}</span>
         ) : typeof log.payload === 'string' && isJson(log.payload) ? (
@@ -183,6 +183,9 @@ const LogItem = React.memo(function LogItem({ log, theme, logViewMode, onEdit })
           String(log.payload ?? '')
         )}
       </pre>
+      {!!log.details && (
+        <div className={`text-xs leading-relaxed whitespace-pre-wrap break-words ${mutedText}`}>{log.details}</div>
+      )}
     </div>
   );
 });
@@ -471,7 +474,7 @@ export default function MqttDebugger() {
     accentBg: 'bg-blue-500',
     accentText: 'text-blue-500',
     accentLight: 'bg-blue-50',
-    floatingPanel: 'bg-white/80 backdrop-blur-xl shadow-lg shadow-gray-200/40 border border-gray-200/50 rounded-xl',
+    floatingPanel: 'bg-white/90 shadow-lg shadow-gray-200/40 border border-gray-200/50 rounded-xl',
   } : {
     // 暗色主题
     bg: 'bg-[#09090B]',
@@ -492,11 +495,11 @@ export default function MqttDebugger() {
     accentBg: 'bg-blue-400',
     accentText: 'text-blue-300',
     accentLight: 'bg-blue-400/10',
-    floatingPanel: 'bg-[#18181B]/80 backdrop-blur-xl shadow-xl shadow-black/40 border border-white/10 rounded-xl',
+    floatingPanel: 'bg-[#18181B]/90 shadow-xl shadow-black/40 border border-white/10 rounded-xl',
   };
   const themedSelectClass = `themed-select ${t.bgInput} border ${t.border} outline-none transition-all ${t.text}`;
   const labelStyle = 'block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider pl-1';
-  const configInputStyle = `w-full ${t.bgInput} border ${t.border} rounded-xl px-3 py-2.5 text-[13px] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all disabled:opacity-50 ${t.text}`;
+  const configInputStyle = `w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-[13px] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all disabled:opacity-50 ${t.text}`;
 
   // --- 初始化逻辑 ---
   useEffect(() => {
@@ -1104,27 +1107,27 @@ export default function MqttDebugger() {
 
     // 根据错误代码进行诊断
     if (errorCode === 'ECONNREFUSED') {
-      diagnosis = '💡 诊断: 连接被拒绝\n   - 服务器可能未运行\n   - 端口号可能错误\n   - 防火墙可能阻止了连接';
+      diagnosis = '连接被拒绝：服务器可能未运行；端口号可能错误；防火墙可能阻止了连接';
     } else if (errorCode === 'ETIMEDOUT' || errorCode === 'ESOCKETTIMEDOUT') {
-      diagnosis = '💡 诊断: 连接超时\n   - 服务器地址可能不可达\n   - 网络问题或防火墙阻止\n   - 服务器响应太慢';
+      diagnosis = '连接超时：服务器地址可能不可达；网络问题或防火墙阻止；服务器响应太慢';
     } else if (errorCode === 'ENOTFOUND' || errorCode === 'EAI_AGAIN') {
-      diagnosis = '💡 诊断: 域名解析失败\n   - 服务器地址拼写错误\n   - DNS 服务器问题\n   - 网络连接问题';
+      diagnosis = '域名解析失败：服务器地址拼写错误；DNS 服务器问题；网络连接问题';
     } else if (errorCode === 'ECONNRESET') {
-      diagnosis = '💡 诊断: 连接被重置\n   - 服务器主动断开了连接\n   - 可能是认证失败\n   - 可能是协议版本不匹配';
+      diagnosis = '连接被重置：服务器主动断开了连接；可能是认证失败；可能是协议版本不匹配';
     } else if (errorMsg.includes('WebSocket')) {
       if (connection.protocol === 'wss') {
-        diagnosis = '💡 诊断: WebSocket SSL 连接失败\n   - 服务器可能不支持 WSS\n   - 尝试使用 ws:// 协议';
+        diagnosis = 'WebSocket SSL 连接失败：服务器可能不支持 WSS；尝试使用 ws:// 协议';
       } else {
-        diagnosis = '💡 诊断: WebSocket 连接失败\n   - 检查服务器是否支持 WebSocket\n   - 检查路径(path)是否正确';
+        diagnosis = 'WebSocket 连接失败：检查服务器是否支持 WebSocket；检查路径(path)是否正确';
       }
     } else if (errorMsg.includes('timeout') || errorMsg.includes('TIMEOUT')) {
-      diagnosis = '💡 诊断: 连接超时\n   - 检查服务器地址和端口\n   - 检查网络连接\n   - 检查防火墙设置';
+      diagnosis = '连接超时：检查服务器地址和端口；检查网络连接；检查防火墙设置';
     } else if (errorMsg.includes('certificate') || errorMsg.includes('SSL') || errorMsg.includes('TLS')) {
-      diagnosis = '💡 诊断: SSL/TLS 证书问题\n   - 自签名证书不被信任\n   - 尝试使用非加密协议 (mqtt:// 或 ws://)';
+      diagnosis = 'SSL/TLS 证书问题：自签名证书不被信任；尝试使用非加密协议 (mqtt:// 或 ws://)';
     } else if (errorMsg.includes('authorized') || errorMsg.includes('authentication')) {
-      diagnosis = '💡 诊断: 认证失败\n   - 用户名或密码错误\n   - 服务器要求认证但未提供凭据';
+      diagnosis = '认证失败：用户名或密码错误；服务器要求认证但未提供凭据';
     } else if (errorMsg.includes('protocol')) {
-      diagnosis = '💡 诊断: 协议错误\n   - MQTT 协议版本不匹配\n   - 服务器可能不是标准 MQTT 服务器';
+      diagnosis = '协议错误：MQTT 协议版本不匹配；服务器可能不是标准 MQTT 服务器';
     }
 
     return diagnosis;
@@ -1190,12 +1193,10 @@ export default function MqttDebugger() {
       const source = window.__MQTT_PRO_MQTT_SOURCE__ || 'unknown';
       const isNative = source === 'native';
 
-      addLog('system', '', `MQTT来源: ${source === 'native' ? 'Node原生(支持TCP)' : source === 'cdn' ? 'CDN浏览器版(仅WebSocket)' : '未知'}`);
-      addLog('system', '', `MQTT版本: ${window.__MQTT_PRO_MQTT_VERSION__ || 'unknown'}`);
+      addLog('system', '', `MQTT 库：${isNative ? 'Node 原生（支持 TCP）' : source === 'cdn' ? 'CDN 浏览器版（仅 WebSocket）' : '未知'}，版本 ${window.__MQTT_PRO_MQTT_VERSION__ || 'unknown'}`);
 
       if (!isNative && (connection.protocol === 'mqtt' || connection.protocol === 'mqtts')) {
-        addLog('error', '', '⚠️  当前使用的MQTT库不支持 mqtt:// 协议');
-        addLog('error', '', '请切换到 ws:// / wss://，或检查桌面端 preload 注入是否成功');
+        addLog('error', '', '当前 MQTT 库不支持 mqtt:// 协议，请切换到 ws:// 或 wss://，或检查桌面端 preload 是否注入成功');
         setConnectStatus('disconnected');
         setReconnectCount(0);
         return;
@@ -1235,8 +1236,7 @@ export default function MqttDebugger() {
       newClient.on('connect', (connack) => {
         setConnectStatus('connected');
         setReconnectCount(0); // 重置重连计数
-        addLog('system', '', '✅ 连接成功');
-        addLog('system', '', `CONNACK 响应: sessionPresent=${connack?.sessionPresent}, returnCode=${connack?.returnCode || 0}`);
+        addLog('system', '', '已连接', `CONNACK sessionPresent=${connack?.sessionPresent}, returnCode=${connack?.returnCode || 0}`);
         setConfigCollapsed(true);
 
         // 自动重订阅
@@ -1298,20 +1298,15 @@ export default function MqttDebugger() {
           const detailsText = [
             shortDetails.length ? `详情: ${shortDetails.join(', ')}` : '',
             diagnosis || '',
-            hintLines.length ? `💡 建议: ${hintLines.join('；')}` : '',
+            hintLines.length ? `建议：${hintLines.join('；')}` : '',
           ].filter(Boolean).join('\n');
 
-          addLog('error', '', `❌ 连接错误: ${errorMsg}`, detailsText);
+          addLog('error', '', `连接错误：${errorMsg}`, detailsText);
           return;
         }
 
-        addLog('error', '', `❌ 连接错误: ${errorMsg}`);
-
-        if (Object.keys(filteredDetails).length > 1) {
-          addLog('system', '', `错误详情: ${JSON.stringify(filteredDetails, null, 2)}`);
-        }
-
-        if (diagnosis) addLog('system', '', diagnosis);
+        const devDetails = Object.keys(filteredDetails).length > 1 ? JSON.stringify(filteredDetails, null, 2) : '';
+        addLog('error', '', `连接错误：${errorMsg}`, [diagnosis, devDetails].filter(Boolean).join('\n'));
       });
 
       // 连接关闭事件
@@ -1319,46 +1314,34 @@ export default function MqttDebugger() {
         const wasConnected = connectStatus === 'connected';
         setConnectStatus('disconnected');
         if (wasConnected) {
-          addLog('system', '', '⚠️ 连接已断开');
+          addLog('system', '', '连接已断开');
+        } else if (reconnectCount === 0) {
+          addLog('error', '', '连接关闭，MQTT 握手未完成', '可能原因：用户名或密码错误；ClientID 被拒绝或已被占用；服务器不允许此连接；MQTT 协议版本不匹配');
         } else {
-          addLog('system', '', '⚠️ 连接关闭（未成功建立连接）');
-          if (reconnectCount === 0) {
-            addLog('error', '', '⚠️ TCP连接成功但MQTT握手失败，可能原因：');
-            addLog('error', '', '  1. 用户名或密码错误（最常见）');
-            addLog('error', '', '  2. ClientID 被拒绝或已被占用');
-            addLog('error', '', '  3. 服务器配置不允许此连接');
-            addLog('error', '', '  4. MQTT 协议版本不匹配');
-          }
+          addLog('system', '', '连接关闭（未成功建立连接）');
         }
       });
 
       // 离线事件
       newClient.on('offline', () => {
-        addLog('system', '', '📴 客户端离线 - 可能是网络问题或服务器无法访问');
-        if (reconnectCountRef.current === 0) {
-          addLog('system', '', '💡 提示: 检查服务器地址、端口、网络连接');
-        }
+        addLog('system', '', reconnectCountRef.current === 0 ? '客户端离线：请检查服务器地址、端口和网络连接' : '客户端离线');
       });
 
       // 重连事件
       newClient.on('reconnect', () => {
         setReconnectCount(prev => {
           const newCount = prev + 1;
-          addLog('system', '', `🔄 正在尝试第 ${newCount} 次重连...`);
+          addLog('system', '', `正在重连（第 ${newCount} 次）`);
 
           if (newCount === 3) {
-            addLog('error', '', '⚠️ 已重连3次失败，可能原因：');
-            addLog('error', '', '  1. 服务器地址或端口错误');
-            addLog('error', '', '  2. 服务器未运行或无法访问');
-            addLog('error', '', '  3. 防火墙阻止连接');
-            addLog('error', '', '  4. 用户名密码错误');
+            addLog('error', '', '已重连 3 次仍失败', '可能原因：服务器地址或端口错误；服务器未运行或无法访问；防火墙阻止连接；用户名或密码错误');
           }
 
           if (newCount >= 10) {
-            addLog('error', '', `🛑 已重连 ${newCount} 次，建议停止连接并检查配置`);
+            addLog('error', '', `已重连 ${newCount} 次，建议停止连接并检查配置`);
             // 10次后停止自动重连
             if (newCount >= 15) {
-              addLog('error', '', '🛑 达到最大重连次数(15)，停止重连');
+              addLog('error', '', '已达最大重连次数（15），已停止重连');
               newClient.end(true);
             }
           }
@@ -1370,14 +1353,14 @@ export default function MqttDebugger() {
       // 包发送事件（用于调试）
       newClient.on('packetsend', (packet) => {
         if (debugPacketLogRef.current && reconnectCountRef.current === 0) {
-          addLog('system', '', `📤 发送数据包: ${packet.cmd}`);
+          addLog('system', '', `发送包：${packet.cmd}`);
         }
       });
 
       // 包接收事件（用于调试）
       newClient.on('packetreceive', (packet) => {
         if (debugPacketLogRef.current && reconnectCountRef.current === 0) {
-          addLog('system', '', `📥 接收数据包: ${packet.cmd}`);
+          addLog('system', '', `接收包：${packet.cmd}`);
         }
       });
 
@@ -1416,33 +1399,33 @@ export default function MqttDebugger() {
       setClient(null);
       setConnectStatus('disconnected');
       setReconnectCount(0); // 重置重连计数
-      addLog('system', '', connectStatus === 'connecting' ? '✅ 已取消连接' : '✅ 已断开连接（停止重连）');
+      addLog('system', '', connectStatus === 'connecting' ? '已取消连接' : '已断开连接（已停止重连）');
     }
   };
 
   const handleSubscribe = () => {
-    if (client?.connected && subTopic && !subscriptions.includes(subTopic)) {
-      client.subscribe(subTopic, e => {
-        if (!e) {
-          updateSubscriptions((prev) => (prev.includes(subTopic) ? prev : [...prev, subTopic]));
-          addLog('system', subTopic, '订阅成功');
-        } else {
-          addLog('error', subTopic, '订阅失败');
-        }
-      });
-    }
+    if (!subTopic) return;
+    if (!client?.connected) { addLog('error', '', '请先连接服务器'); return; }
+    if (subscriptions.includes(subTopic)) { addLog('system', subTopic, '已订阅该主题'); return; }
+    client.subscribe(subTopic, (e) => {
+      if (e) { addLog('error', subTopic, '订阅失败'); return; }
+      updateSubscriptions((prev) => (prev.includes(subTopic) ? prev : [...prev, subTopic]));
+      addLog('system', subTopic, '订阅成功');
+    });
   };
 
   const handleUnsubscribe = (t) => {
-    if (client?.connected) {
-      client.unsubscribe(t, e => {
-        if (!e) {
-          updateSubscriptions((prev) => prev.filter((i) => i !== t));
-          setSubMonitorSelectedTopics((prev) => prev.filter((x) => x !== t));
-          addLog('system', t, '退订成功');
-        }
-      });
-    }
+    const removeLocal = () => {
+      updateSubscriptions((prev) => prev.filter((i) => i !== t));
+      setSubMonitorSelectedTopics((prev) => prev.filter((x) => x !== t));
+    };
+    // 未连接时没有服务端订阅可退，直接移除本地保存的订阅
+    if (!client?.connected) { removeLocal(); return; }
+    client.unsubscribe(t, (e) => {
+      if (e) { addLog('error', t, `退订失败：${e.message}`); return; }
+      removeLocal();
+      addLog('system', t, '退订成功');
+    });
   };
 
   const handlePublish = () => {
@@ -2262,16 +2245,26 @@ export default function MqttDebugger() {
       )}
 
       {/* 左侧侧边栏 */}
-      <aside className={`app-sidebar ${isSidebarOpen ? 'w-[320px] opacity-100' : 'w-0 opacity-0'} ${t.bgSecondary} border-r ${t.borderLight} flex flex-col shrink-0 transition-all duration-300 overflow-hidden z-20`}>
+      <aside className={`app-sidebar ${isSidebarOpen ? 'w-[280px]' : 'w-0 opacity-0'} ${t.bgSecondary} border-r ${t.borderLight} flex flex-col shrink-0 transition-all duration-300 overflow-hidden z-20`}>
 
         {/* Logo 区域（渐变图标 + NRmqtt + 主题切换） */}
-        <div className="h-16 px-6 flex items-center justify-between shrink-0 min-w-[320px]">
+        <div className="h-16 px-4 flex items-center justify-between shrink-0 min-w-[280px]">
           <div className="flex items-center gap-3">
-            <svg viewBox="0 0 1024 1024" className="w-8 h-8 text-blue-500" aria-hidden="true">
-              <path d="M 120 640 L 424 640 L 492 200 L 560 860 L 628 640 L 904 640" fill="none" stroke="currentColor" strokeWidth="80" strokeLinecap="round" strokeLinejoin="round" />
+            {/* 32px 像素对齐设计：横线中心在 y=20.5、描边 3px，上下边缘恰落在像素行上；须保持 w-8 h-8（1:1 渲染）。与 scripts/gen-icon.cjs 的 32px 帧一致 */}
+            <svg viewBox="0 0 32 32" className="w-8 h-8 text-blue-500" aria-hidden="true">
+              <path d="M3.5 20.5 H11 L14.5 5.5 L18 27 L21 20.5 H28.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             <span className={`font-bold text-base tracking-tight ${theme === 'light' ? 'text-gray-800' : 'text-gray-100'}`}>NRmqtt</span>
           </div>
+          <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setShowBackupModal(true)}
+            className={`p-1.5 rounded-lg ${t.textMuted} ${t.bgHover} transition-colors`}
+            title="备份与导入"
+            aria-label="备份与导入"
+          >
+            <FileText size={16} />
+          </button>
           {/* 主题切换开关 */}
           <button
             onClick={toggleTheme}
@@ -2288,12 +2281,13 @@ export default function MqttDebugger() {
               {theme === 'dark' ? <SunDim size={13} className="text-slate-400" /> : <Moon size={13} className="text-slate-500" />}
             </span>
           </button>
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-2 space-y-6">
+        <div className="flex-1 overflow-y-auto custom-scrollbar px-4 py-2 space-y-4">
 
           {/* 连接状态行（悬浮面板：状态点 + 地址） */}
-          <div className={`flex items-center gap-2 px-3 py-2.5 ${t.floatingPanel}`}>
+          <div className={`flex items-center gap-2 px-3 py-2 ${t.floatingPanel}`}>
             <span className="relative inline-flex h-2 w-2 shrink-0">
               {connectStatus !== 'disconnected' && <span className={`absolute inline-flex h-full w-full rounded-full opacity-50 animate-ping ${connectStatus === 'connected' ? 'bg-[#06D6A0]' : 'bg-[#FFD166]'}`}></span>}
               <span className={`relative inline-flex rounded-full h-2 w-2 ${connectStatus === 'connected' ? 'bg-[#06D6A0]' : connectStatus === 'connecting' ? 'bg-[#FFD166]' : 'bg-[#EF476F]'}`}></span>
@@ -2311,56 +2305,52 @@ export default function MqttDebugger() {
 
           {/* 连接配置 */}
           <section className="space-y-2">
-          <div className="mb-3">
+          <div className="mb-2">
             <button
               onClick={() => setConfigCollapsed(!configCollapsed)}
-              className="w-full flex items-center justify-between group py-2 mb-2"
+              className="w-full flex items-center justify-between group py-1.5 mb-1"
             >
               <div className="flex items-center gap-2 font-bold text-[13px] text-[#333D4F] dark:text-[#E6EDF3]">
                 <span>连接配置</span>
               </div>
               <div className="flex items-center gap-2">
-                {connectStatus === 'connected' && <span className={`text-[11px] ${TONE.ok} px-2 py-0.5 rounded-full`}>在线</span>}
                 {configCollapsed ? <ChevronDown size={16} className="text-slate-600 group-hover:text-slate-800 dark:group-hover:text-slate-300 transition-colors"/> : <ChevronUp size={16} className="text-slate-600 group-hover:text-slate-800 dark:group-hover:text-slate-300 transition-colors"/>}
               </div>
             </button>
 
             {!configCollapsed && (
-              <div className="space-y-4 pt-1 animate-in fade-in slide-in-from-top-2 duration-200">
-                 <div>
-                   <label className={labelStyle}>Host & Protocol</label>
-                   <div className={`flex items-center ${t.bgInput} border ${t.border} rounded-xl focus-within:ring-2 focus-within:ring-blue-500/30 focus-within:border-blue-500 transition-all overflow-hidden`}>
-                     <select
-                       value={connection.protocol}
-                       onChange={(e) => handleProtocolChange(e.target.value)}
-                       disabled={connectStatus === 'connected'}
-                       className="bg-transparent text-[13px] text-slate-700 dark:text-slate-300 outline-none pl-3 pr-1 py-2.5 font-bold cursor-pointer border-r border-gray-300/50 dark:border-white/10 shrink-0"
-                     >
-                       <option value="mqtt" disabled={!isDesktopShell}>mqtt://</option>
-                       <option value="mqtts" disabled={!isDesktopShell}>mqtts://</option>
-                       <option value="ws">ws://</option>
-                       <option value="wss">wss://</option>
-                     </select>
-                     <input
-                       type="text"
-                       value={connection.host}
-                       onChange={(e) => setConnection({...connection, host: e.target.value})}
-                       disabled={connectStatus === 'connected'}
-                       className="flex-1 min-w-0 w-full bg-transparent text-[13px] px-3 py-2.5 outline-none text-gray-800 dark:text-gray-200 placeholder:text-gray-400 font-medium"
-                       placeholder="broker.emqx.io"
-                     />
-                   </div>
-                 </div>
-
-                 <div className="grid grid-cols-2 gap-3">
-                   <div>
-                     <label className={labelStyle}>Port</label>
-                     <input type="number" value={connection.port} onChange={(e) => handlePortChange(e.target.value)} disabled={connectStatus === 'connected'} className={configInputStyle} placeholder="1883"/>
-                   </div>
-                   <div>
-                     <label className={labelStyle}>Client ID</label>
-                     <input type="text" value={connection.clientId} onChange={(e) => setConnection({...connection, clientId: e.target.value})} className={configInputStyle} />
-                   </div>
+              <div className="space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-200">
+                 <div className={`flex items-center ${t.bgInput} border ${t.border} rounded-lg focus-within:ring-2 focus-within:ring-blue-500/30 focus-within:border-blue-500 transition-all overflow-hidden`}>
+                   <select
+                     value={connection.protocol}
+                     onChange={(e) => handleProtocolChange(e.target.value)}
+                     disabled={connectStatus === 'connected'}
+                     aria-label="协议"
+                     className="bg-transparent text-[13px] text-slate-700 dark:text-slate-300 outline-none pl-2.5 pr-1 py-2 font-bold cursor-pointer border-r border-gray-300/50 dark:border-white/10 shrink-0"
+                   >
+                     <option value="mqtt" disabled={!isDesktopShell}>mqtt</option>
+                     <option value="mqtts" disabled={!isDesktopShell}>mqtts</option>
+                     <option value="ws">ws</option>
+                     <option value="wss">wss</option>
+                   </select>
+                   <input
+                     type="text"
+                     value={connection.host}
+                     onChange={(e) => setConnection({...connection, host: e.target.value})}
+                     disabled={connectStatus === 'connected'}
+                     aria-label="主机"
+                     className="flex-1 min-w-0 w-full bg-transparent text-[13px] px-2.5 py-2 outline-none text-gray-800 dark:text-gray-200 placeholder:text-gray-400 font-medium"
+                     placeholder="broker.emqx.io"
+                   />
+                   <input
+                     type="number"
+                     value={connection.port}
+                     onChange={(e) => handlePortChange(e.target.value)}
+                     disabled={connectStatus === 'connected'}
+                     aria-label="端口"
+                     className="w-14 shrink-0 bg-transparent text-[13px] font-mono px-1 py-2 outline-none text-gray-800 dark:text-gray-200 border-l border-gray-300/50 dark:border-white/10 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                     placeholder="1883"
+                   />
                  </div>
 
                 {protocolTouched.current && connection.protocol === 'wss' && (
@@ -2371,14 +2361,13 @@ export default function MqttDebugger() {
 
                 {(connection.protocol === 'ws' || connection.protocol === 'wss') && (
                   <div>
-                    <label className={labelStyle}>Path</label>
                     <input
                       type="text"
                       value={connection.path}
                       onChange={(e) => setConnection({...connection, path: e.target.value})}
                       disabled={connectStatus === 'connected'}
                       className={configInputStyle}
-                      placeholder="/mqtt"
+                      aria-label="Path" placeholder="Path，如 /mqtt"
                     />
                   </div>
                 )}
@@ -2389,6 +2378,10 @@ export default function MqttDebugger() {
 
                 {showAdvanced && (
                   <div className="space-y-3">
+                    <div>
+                      <label className={labelStyle}>Client ID</label>
+                      <input type="text" value={connection.clientId} onChange={(e) => setConnection({...connection, clientId: e.target.value})} className={configInputStyle} />
+                    </div>
                     <div>
                       <label className={labelStyle}>Auth</label>
                       <div className="grid grid-cols-2 gap-2">
@@ -2434,7 +2427,7 @@ export default function MqttDebugger() {
                 <button
                   onClick={connectStatus === 'connected' || connectStatus === 'connecting' || reconnectCount > 0 ? handleDisconnect : handleConnect}
                   disabled={!sdkReady}
-                  className={`w-full text-white py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all text-sm ${
+                  className={`w-full text-white py-2 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg transition-all text-sm ${
                     connectStatus !== 'connected'
                       ? reconnectCount > 0
                         ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-500/20'
@@ -2459,12 +2452,12 @@ export default function MqttDebugger() {
 
                 {/* 预设配置（本地保存/加载） */}
                 <div className="flex gap-2">
-                   <select className={`flex-1 text-xs rounded-xl px-3 py-2.5 focus:border-blue-500 ${themedSelectClass}`} onChange={handleLoadConfig} value={connection.name || ""}>
+                   <select className={`flex-1 text-xs rounded-lg px-3 py-2 focus:border-blue-500 ${themedSelectClass}`} onChange={handleLoadConfig} value={connection.name || ""}>
                      <option value="" disabled>加载预设配置...</option>
                      {savedConfigs.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                     </select>
-                    <button onClick={handleSaveConfig} title="保存配置" className={`p-2.5 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-xl ${t.textMuted} hover:text-blue-500 transition-colors`}><Save className="w-4 h-4"/></button>
-                    {connection.name && <button onClick={handleDeleteConfig} title="删除配置" className={`p-2.5 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-xl ${t.textMuted} hover:text-rose-500 transition-colors`}><Trash2 className="w-4 h-4"/></button>}
+                    <button onClick={handleSaveConfig} title="保存配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-blue-500 transition-colors`}><Save className="w-4 h-4"/></button>
+                    {connection.name && <button onClick={handleDeleteConfig} title="删除配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-rose-500 transition-colors`}><Trash2 className="w-4 h-4"/></button>}
                  </div>
               </div>
             )}
@@ -2475,7 +2468,7 @@ export default function MqttDebugger() {
             <button
               type="button"
               onClick={() => setSubscriptionsCollapsed((v) => !v)}
-              className="w-full flex items-center justify-between group py-2 mb-2"
+              className="w-full flex items-center justify-between group py-1.5 mb-1"
               title={subscriptionsCollapsed ? '展开订阅' : '收起订阅'}
             >
               <div className="flex items-center gap-2 font-bold text-[13px] text-[#333D4F] dark:text-[#E6EDF3]">
@@ -2532,15 +2525,38 @@ export default function MqttDebugger() {
                   {subscriptions.length === 0 && <div className={`text-xs ${t.textMuted} text-center py-4 border border-dashed ${t.border} rounded-xl`}>暂无订阅</div>}
                 </div>
                 {newTopicOpen && (
-                  <div className="flex gap-2 px-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                    <input ref={subTopicInputRef} type="text" placeholder="Topic (e.g. #)" value={subTopic} onChange={(e) => setSubTopic(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { handleSubscribe(); setNewTopicOpen(false); } }} className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2 text-[13px] focus:border-blue-500 outline-none transition-all ${t.text}`}/>
-                    <button onClick={() => { handleSubscribe(); setNewTopicOpen(false); }} disabled={!client?.connected} className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-xl text-[13px] font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm shadow-blue-500/20">订阅</button>
+                  <div
+                    className="px-2 animate-in fade-in slide-in-from-top-2 duration-200"
+                    onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setNewTopicOpen(false); }}
+                  >
+                    <div className={`flex items-center ${t.bgInput} border ${t.border} rounded-lg overflow-hidden focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all`}>
+                      <input
+                        ref={subTopicInputRef}
+                        type="text"
+                        placeholder="Topic，如 # 或 a/b/+"
+                        aria-label="订阅 Topic"
+                        value={subTopic}
+                        onChange={(e) => setSubTopic(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { handleSubscribe(); setNewTopicOpen(false); }
+                          else if (e.key === 'Escape') setNewTopicOpen(false);
+                        }}
+                        className={`flex-1 min-w-0 bg-transparent px-2.5 py-1.5 text-xs font-mono outline-none ${t.text}`}
+                      />
+                      <button
+                        onClick={() => { handleSubscribe(); setNewTopicOpen(false); }}
+                        disabled={!client?.connected}
+                        className="shrink-0 bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        订阅
+                      </button>
+                    </div>
                   </div>
                 )}
                 <button
                   type="button"
                   onClick={() => { setNewTopicOpen(true); setTimeout(() => subTopicInputRef.current?.focus(), 0); }}
-                  className="w-full mt-1 py-2.5 border-2 border-dashed border-blue-500/30 dark:border-blue-300/30 rounded-xl text-[12px] font-bold text-blue-500 dark:text-blue-300 hover:bg-blue-500/10 dark:hover:bg-blue-300/10 transition-colors flex items-center justify-center gap-2"
+                  className="w-full mt-1 py-2.5 border-2 border-dashed border-blue-500/30 dark:border-blue-300/30 rounded-xl text-[12px] font-bold text-blue-500 dark:text-blue-300 hover:bg-blue-500/10 dark:hover:bg-blue-300/10 transition-all flex items-center justify-center gap-2"
                 >
                   <Plus size={15} strokeWidth={2.5}/> New Topic
                 </button>
@@ -2550,24 +2566,14 @@ export default function MqttDebugger() {
         </section>
         </div>
 
-        {/* 底部工具入口 */}
-        <div className={`p-4 border-t ${t.borderLight}`}>
-          <button
-            onClick={() => setShowBackupModal(true)}
-            className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-[12px] font-medium rounded-xl transition-all duration-300 text-slate-500 dark:text-slate-400 ${t.bgHover}`}
-          >
-            <FileText className="w-4 h-4" />
-            <span>备份</span>
-          </button>
-        </div>
       </aside>
 
       {/* 右侧主内容区 */}
       <main className={`flex-1 flex flex-col min-w-0 relative ${t.bg} transition-colors duration-300`}>
 
         {/* 顶部 Header */}
-        <header className={`app-header sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F9FAFB]/80' : 'bg-[#09090B]/80'} backdrop-blur-xl border-b ${t.border} h-16 px-5 flex items-center justify-between shrink-0`}>
-          <div className="flex items-center gap-4 h-full">
+        <header className={`app-header sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F9FAFB]' : 'bg-[#09090B]'} border-b ${t.border} h-16 px-5 flex items-center justify-between shrink-0`}>
+          <div className="flex items-center gap-3 h-full">
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
               className={`p-2 rounded-xl ${t.textSecondary} ${t.bgHover} transition-all duration-300 ${!isSidebarOpen && 'rotate-180'}`}
@@ -2575,8 +2581,7 @@ export default function MqttDebugger() {
             >
               <Layout size={18} />
             </button>
-            <h2 className={`font-bold text-base ${theme === 'light' ? 'text-[#333D4F]' : 'text-white'} tracking-wide`}>消息日志</h2>
-            <div className="flex items-center bg-gray-100 dark:bg-zinc-800/50 rounded-lg p-0.5 ml-1">
+            <div className="flex items-center bg-gray-100 dark:bg-zinc-800/50 rounded-lg p-0.5">
               {([['all', '全部'], ['in', '接收'], ['out', '发送']]).map(([type, label]) => (
                 <button
                   key={type}
@@ -2610,7 +2615,7 @@ export default function MqttDebugger() {
                 onChange={e => setLogFilter(e.target.value)}
                 placeholder="搜索日志..."
                 ref={logFilterInputRef}
-                className={`pl-10 pr-4 py-2 ${t.bgInput} ${t.border} border rounded-full text-[13px] w-48 lg:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${t.text} placeholder:${t.textMuted}`}
+                className={`pl-10 pr-4 py-2 ${t.bgInput} ${t.border} border rounded-full text-[13px] w-40 min-[1180px]:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${t.text} placeholder:${t.textMuted}`}
               />
             </div>
             {isDevMode && (
@@ -2655,8 +2660,8 @@ export default function MqttDebugger() {
         </div>
 
         {/* 发布台 */}
-        <div className="shrink-0 mx-4 mb-4 z-20">
-          <div className={`p-4 ${t.floatingPanel} flex flex-col gap-3 transition-transform duration-300`}>
+        <div className="shrink-0 mx-4 mb-3 z-20">
+          <div className={`p-3 ${t.floatingPanel} flex flex-col gap-2.5`}>
 
             {/* 控制行：Topic + QoS + Retain + 定时 */}
             <div className="flex items-center gap-3">
@@ -2693,15 +2698,23 @@ export default function MqttDebugger() {
               {/* 定时发送 */}
               <div className={`flex items-center gap-2 ${t.bgInput} border border-transparent rounded-xl px-3 py-2`}>
                 <Timer className={`w-4 h-4 ${t.textMuted}`}/>
-                <input
-                  type="number"
-                  value={timerInterval}
-                  onChange={(e) => setTimerInterval(Math.max(100, Number(e.target.value)))}
-                  disabled={timerEnabled}
-                  className={`w-14 bg-transparent text-xs outline-none text-center ${t.textSecondary}`}
-                  placeholder="间隔"
-                />
-                <span className={`text-xs ${t.textMuted}`}>ms</span>
+                {timerEnabled ? (
+                  <span className="w-[72px] text-center text-xs font-mono text-emerald-600 dark:text-emerald-400">
+                    {formatTimerCountdown(timerRemainingMs)}
+                  </span>
+                ) : (
+                  <>
+                    <input
+                      type="number"
+                      value={timerInterval}
+                      onChange={(e) => setTimerInterval(Math.max(100, Number(e.target.value)))}
+                      className={`w-14 bg-transparent text-xs outline-none text-center ${t.textSecondary}`}
+                      placeholder="间隔"
+                      aria-label="定时间隔（毫秒）"
+                    />
+                    <span className={`text-xs ${t.textMuted}`}>ms</span>
+                  </>
+                )}
                 <button
                   onClick={toggleTimer}
                   className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
@@ -2716,28 +2729,8 @@ export default function MqttDebugger() {
             </div>
 
             {timerEnabled && (
-              <div className={`rounded-lg border px-3 py-2 ${theme === 'light' ? 'bg-emerald-50/80 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
-                <div className="flex items-center justify-between gap-3 mb-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Timer className={`${theme === 'light' ? 'text-emerald-600' : 'text-emerald-300'} w-4 h-4 shrink-0`} />
-                    <div className={`text-xs font-semibold ${theme === 'light' ? 'text-emerald-800' : 'text-emerald-200'} truncate`}>
-                      定时发送运行中
-                    </div>
-                  </div>
-                  <div className={`text-xs font-mono shrink-0 ${theme === 'light' ? 'text-emerald-700' : 'text-emerald-200'}`}>
-                    {formatTimerCountdown(timerRemainingMs)} 后发送
-                  </div>
-                </div>
-                <div className={`h-2 rounded-full overflow-hidden ${theme === 'light' ? 'bg-emerald-100' : 'bg-white/5'}`}>
-                  <div
-                    className={`h-full rounded-full transition-[width] duration-100 ${theme === 'light' ? 'bg-emerald-500' : 'bg-emerald-400'}`}
-                    style={{ width: `${timerProgress}%` }}
-                  />
-                </div>
-                <div className={`mt-2 flex items-center justify-between gap-3 text-[11px] ${theme === 'light' ? 'text-emerald-700/90' : 'text-emerald-200/80'}`}>
-                  <span className="truncate">{pubTopic || '未设置 Topic'}</span>
-                  <span className="shrink-0">每 {timerInterval}ms 一次</span>
-                </div>
+              <div className="h-0.5 -mt-1 rounded-full overflow-hidden bg-emerald-500/15" role="progressbar" aria-label="定时发送进度">
+                <div className="h-full bg-emerald-500 transition-[width] duration-100" style={{ width: `${timerProgress}%` }} />
               </div>
             )}
 
@@ -2776,13 +2769,13 @@ export default function MqttDebugger() {
                   ref={pubMessageTextareaRef}
                   value={pubMessage}
                   onChange={(e) => setPubMessage(e.target.value)}
-                  className={`payload-textarea custom-scrollbar w-full bg-transparent p-3 font-mono text-[13px] leading-relaxed ${t.text} min-h-[90px] max-h-[38vh] overflow-y-auto outline-none rounded-xl`}
+                  className={`payload-textarea custom-scrollbar w-full bg-transparent p-3 font-mono text-[13px] leading-relaxed ${t.text} min-h-[64px] max-h-[38vh] overflow-y-auto outline-none rounded-xl`}
                   placeholder='{"msg": "Hello"}'
                   spellCheck="false"
                 />
                 <button type="button" onClick={openPublishEditor} className={`absolute bottom-2 right-2 p-1.5 rounded-lg ${t.textSecondary} ${t.bgHover} transition-all`} title="编辑即将发送的消息"><Edit2 size={14}/></button>
               </div>
-              <button onClick={handlePublish} disabled={!client?.connected} className={`w-[110px] self-stretch min-h-[90px] bg-blue-500 hover:bg-blue-600 dark:bg-blue-400 dark:hover:bg-blue-300 text-white rounded-xl font-bold flex flex-col items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md shadow-blue-500/25 dark:shadow-blue-400/20`}>
+              <button onClick={handlePublish} disabled={!client?.connected} className={`w-24 self-stretch min-h-[64px] bg-blue-500 hover:bg-blue-600 dark:bg-blue-400 dark:hover:bg-blue-300 text-white rounded-xl font-bold flex flex-col items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md shadow-blue-500/25 dark:shadow-blue-400/20`}>
                 <Send size={20}/>
                 <span className="text-[13px] font-bold tracking-widest uppercase">发送</span>
               </button>
