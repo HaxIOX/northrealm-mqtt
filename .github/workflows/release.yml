@@ -1,17 +1,56 @@
 name: Release
 
+# One tag -> one Release carrying the Windows installer, the Windows portable zip and the signed Android APK.
+#
+#   git tag v0.1.15 && git push origin v0.1.15
+#
+# Manual runs (workflow_dispatch) are a rehearsal: everything is built and uploaded as workflow
+# artifacts, but no GitHub Release is created.
 on:
   push:
     tags:
-      - 'desktop-v*'
-      - 'android-v*'
+      - 'v*'
+  workflow_dispatch: {}
 
 permissions:
   contents: write
 
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+      - name: Check that tag, package.json and Android versions agree
+        id: v
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          GRADLE_VERSION="$(sed -n 's/.*versionName "\(.*\)".*/\1/p' android/app/build.gradle)"
+          GRADLE_CODE="$(sed -n 's/.*versionCode \([0-9]*\).*/\1/p' android/app/build.gradle)"
+          echo "package.json:        $PKG_VERSION"
+          echo "android versionName: $GRADLE_VERSION (versionCode $GRADLE_CODE)"
+          if [ "$PKG_VERSION" != "$GRADLE_VERSION" ]; then
+            echo "::error::package.json version ($PKG_VERSION) != android versionName ($GRADLE_VERSION)"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            echo "tag:                 $TAG_VERSION"
+            if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+              echo "::error::tag version ($TAG_VERSION) != package.json version ($PKG_VERSION)"
+              exit 1
+            fi
+            test -f ".github/release-notes/v${PKG_VERSION}.md" \
+              || { echo "::error::missing .github/release-notes/v${PKG_VERSION}.md"; exit 1; }
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+
   build-desktop:
-    if: startsWith(github.ref_name, 'desktop-v')
+    needs: check-version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,19 +60,18 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run desktop:portable
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          name: Northrealm MQTT Desktop ${{ github.ref_name }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
+          name: desktop
+          if-no-files-found: error
+          path: |
             release/*Setup*.exe
             release/latest.yml
             release/*.blockmap
             release/*portable*.zip
 
   build-android:
-    if: startsWith(github.ref_name, 'android-v')
+    needs: check-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,29 +105,41 @@ jobs:
           cd android
           chmod +x gradlew
           ./gradlew :app:assembleRelease --no-daemon --console=plain
-      - name: Prepare Android asset
-        id: release_meta
+      - name: Name the APK and verify its signature
         run: |
-          VERSION="${GITHUB_REF_NAME#android-v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          VERSION="${{ needs.check-version.outputs.version }}"
           mkdir -p release-android
           cp android/app/build/outputs/apk/release/app-release.apk "release-android/Northrealm-Android-v${VERSION}.apk"
-      - name: Remove legacy asset name
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release delete-asset "$GITHUB_REF_NAME" "Northrealm-Android-${GITHUB_REF_NAME}.apk" --yes || true
+          APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --print-certs "release-android/Northrealm-Android-v${VERSION}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          if-no-files-found: error
+          path: release-android/*.apk
+
+  publish:
+    # Only a pushed tag publishes. Manual runs stop after the build jobs (rehearsal).
+    if: github.ref_type == 'tag'
+    needs: [check-version, build-desktop, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: List assets
+        run: ls -l release-assets
       - uses: softprops/action-gh-release@v2
         with:
-          name: v${{ steps.release_meta.outputs.version }}
-          body_path: .github/release-notes/${{ github.ref_name }}.md
+          name: v${{ needs.check-version.outputs.version }}
+          body_path: .github/release-notes/v${{ needs.check-version.outputs.version }}.md
           make_latest: true
           fail_on_unmatched_files: true
-          files: release-android/*.apk
-      - name: Update Android release metadata
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release edit "$GITHUB_REF_NAME" \
-            --title "v${{ steps.release_meta.outputs.version }}" \
-            --notes-file ".github/release-notes/${GITHUB_REF_NAME}.md" \
-            --latest
+          files: |
+            release-assets/*Setup*.exe
+            release-assets/latest.yml
+            release-assets/*.blockmap
+            release-assets/*portable*.zip
+            release-assets/*.apk
