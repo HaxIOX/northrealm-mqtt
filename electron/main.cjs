@@ -25,6 +25,10 @@ const logMain = (message, extra) => {
 };
 
 let mainWindow = null;
+
+// 窗口最小尺寸，同时也是首次启动（没有保存过窗口状态）时的默认尺寸
+const MIN_WIDTH = 1000;
+const MIN_HEIGHT = 650;
 const STATE_FILE = path.join(app.getPath('userData'), 'window-state.json');
 
 // 读取上次窗口状态；文件缺失/损坏时回退默认，屏幕外的坐标丢弃（只保留尺寸）
@@ -33,8 +37,8 @@ function loadWindowState() {
     const raw = fs.readFileSync(STATE_FILE, 'utf8');
     const s = JSON.parse(raw);
     if (typeof s.width !== 'number' || typeof s.height !== 'number') return {};
-    const w = Math.max(s.width, 1000);
-    const h = Math.max(s.height, 650);
+    const w = Math.max(s.width, MIN_WIDTH);
+    const h = Math.max(s.height, MIN_HEIGHT);
     if (typeof s.x === 'number' && typeof s.y === 'number') {
       const visible = screen.getAllDisplays().some((d) => {
         const a = d.workArea;
@@ -81,10 +85,10 @@ if (!gotLock) {
 
     mainWindow = new BrowserWindow({
       ...state,
-      width: state.width ?? 1280,
-      height: state.height ?? 800,
-      minWidth: 1000,
-      minHeight: 650,
+      width: state.width ?? MIN_WIDTH,
+      height: state.height ?? MIN_HEIGHT,
+      minWidth: MIN_WIDTH,
+      minHeight: MIN_HEIGHT,
       autoHideMenuBar: true,
       icon: fs.existsSync(winIcon) ? winIcon : undefined,
       webPreferences: {
