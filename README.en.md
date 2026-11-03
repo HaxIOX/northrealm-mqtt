@@ -33,7 +33,7 @@ Name/Logo usage rules: `TRADEMARK.md`.
 - Local backup: one-click import/export (optional “export with passwords” in plaintext)
 - Subscribe/publish: QoS 0/1/2, Retain, wildcards `#` / `+`
 - Live logs, TEXT/HEX view
-- Quick actions: save common publishes and send with one click
+- Quick actions: save common publishes and send with one click; `Ctrl/Cmd+P` to search, `Enter` to send, `Shift+Enter` to only fill the publish box
 
 ## Tech stack
 
@@ -78,7 +78,6 @@ npm run desktop:build
 - [x] 2025-12-26: Align desktop display name as “Northrealm (北境)” (productName/appId)
 - [ ] 2026-Q1: UX improvements (backup import/export, search/filter, log performance)
 - [ ] 2026-Q2: Mobile app (planned; tech stack TBD)
-- [ ] 2026-Q3: Cloud sync (planned: optional Firebase or self-hosted backend)
 
 ## License
 
