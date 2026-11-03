@@ -28,8 +28,8 @@ body,
 
 body {
   overflow: hidden;
-  background: #f8fafc;
-  color: #0f172a;
+  background: #f9fafb;
+  color: #1f2937;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
@@ -51,13 +51,21 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* 键盘焦点：仅键盘导航时显示描边，鼠标点击不出现 */
+button:focus-visible,
+[role='button']:focus-visible,
+select:focus-visible {
+  outline: 2px solid #5b8def;
+  outline-offset: 2px;
+}
+
 ::selection {
   background: rgba(37, 99, 235, 0.2);
 }
 
 @layer components {
   .app-shell {
-    --app-accent: #2563eb;
+    --app-accent: #5b8def;
     --app-panel: #ffffff;
     --app-border: rgba(148, 163, 184, 0.22);
   }
@@ -83,7 +91,7 @@ button {
 
 @media (prefers-color-scheme: dark) {
   body {
-    background: #050505;
+    background: #09090b;
     color: #f4f4f5;
   }
 }

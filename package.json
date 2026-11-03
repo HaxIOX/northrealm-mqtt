@@ -1,7 +1,7 @@
 {
   "name": "northrealm-mqtt",
   "private": true,
-  "version": "0.1.10",
+  "version": "0.1.11",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -14,7 +14,6 @@
     "desktop:build:kill": "npm run build && node scripts/desktop-build-prep.cjs --kill && node scripts/gen-icon.cjs && set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/&& electron-builder --win"
   },
   "dependencies": {
-    "firebase": "^12.7.0",
     "lucide-react": "^0.562.0",
     "mqtt": "^5.14.1",
     "react": "^19.2.0",

@@ -1,20 +1,14 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { 
-  getFirestore, doc, setDoc, onSnapshot 
-} from 'firebase/firestore';
 import {
   Send, Download, Trash2, Play, Square, Activity,
-  Server, Settings, MessageSquare, Loader2, Save, Search,
+  Settings, MessageSquare, Loader2, Save, Search,
   PauseCircle, PlayCircle, FileJson, X, ChevronDown, ChevronUp,
-  Copy, Plus, Binary, Cloud, Zap, Edit2, Check, Share2,
+  Copy, Plus, Binary, Zap, Edit2,
   AlertCircle, Layout, RefreshCw, Timer, BarChart3, Keyboard,
-  FileText, Variable, RotateCcw, Info, ArrowUpRight, ArrowDownRight,
-  Bell, LayoutDashboard, Sun, Moon, Star
+  FileText, Variable, Info, ArrowUpRight, ArrowDownRight,
+  Bell, LayoutDashboard, SunDim, Moon, Star, Hash, Check
 } from 'lucide-react';
 import { detectRuntime, isDesktopTcpCapable } from './mqtt/runtime.js';
-import { encryptJson, decryptJson } from './mqtt/e2ee.js';
 
 // 协议端口映射表
 const PROTOCOL_PORT_MAP = {
@@ -24,28 +18,26 @@ const PROTOCOL_PORT_MAP = {
   'mqtts': { port: 8883, description: 'MQTT TLS' }
 };
 
-// --- Firebase 初始化与容错处理 ---
-let app, auth, db;
-let isFirebaseAvailable = false;
-let appId = 'default-app-id';
-
-try {
-  if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-    const firebaseConfig = JSON.parse(__firebase_config);
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-    isFirebaseAvailable = true;
-    
-    if (typeof __app_id !== 'undefined') {
-      appId = __app_id;
-    }
-  } else {
-    console.warn("未检测到 __firebase_config，应用将以【仅本地模式】运行。云同步功能不可用。");
-  }
-} catch (error) {
-  console.error("Firebase 初始化失败，降级为本地模式:", error);
-}
+// --- 语义色（浅底徽标）：dark: 变体自动切换深浅色，替代 theme 三元判断 ---
+const TONE = {
+  info: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
+  ok: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400',
+  warn: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400',
+  err: 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400',
+  accent: 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300',
+  neutral: 'bg-slate-50 text-slate-600 dark:bg-slate-500/10 dark:text-slate-400',
+};
+const TONE_BORDER = {
+  warn: 'border-amber-200 dark:border-amber-500/30',
+  err: 'border-rose-200 dark:border-rose-500/30',
+  accent: 'border-violet-200 dark:border-violet-500/30',
+  neutral: 'border-slate-200 dark:border-slate-500/30',
+};
+// 选中态（带边框的高亮块）
+const ACTIVE = {
+  info: 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-500/20 dark:border-blue-500/40 dark:text-blue-200',
+  ok: 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-500/20 dark:border-emerald-500/40 dark:text-emerald-200',
+};
 
 // --- 日志展示辅助（模块级纯函数） ---
 const MAX_LOGS = 500;
@@ -112,13 +104,13 @@ function tokenizeJson(text) {
 function JsonHighlight({ text, theme }) {
   const tokens = useMemo(() => tokenizeJson(text), [text]);
   const cls = {
-    key: theme === 'light' ? 'text-blue-600' : 'text-blue-400/80',
+    key: theme === 'light' ? 'text-[#2563eb]' : 'text-[#60a5fa]/80',
     string: theme === 'light' ? 'text-emerald-700' : 'text-emerald-400/70',
     number: theme === 'light' ? 'text-amber-600' : 'text-amber-400/70',
-    boolean: theme === 'light' ? 'text-violet-600' : 'text-violet-400/70',
-    null: theme === 'light' ? 'text-violet-600' : 'text-violet-400/70',
-    other: theme === 'light' ? 'text-slate-600' : 'text-gray-300',
-    punct: theme === 'light' ? 'text-slate-500' : 'text-gray-500',
+    boolean: theme === 'light' ? 'text-violet-600' : 'text-[#FB7185]/80',
+    null: theme === 'light' ? 'text-violet-600' : 'text-[#FB7185]/80',
+    other: theme === 'light' ? 'text-slate-600' : 'text-[#94A3B8]',
+    punct: theme === 'light' ? 'text-slate-500' : 'text-[#94A3B8]',
     whitespace: '',
   };
   return tokens.map((tok, idx) => (
@@ -126,7 +118,27 @@ function JsonHighlight({ text, theme }) {
   ));
 }
 
-const LogItem = React.memo(function LogItem({ log, theme, logViewMode, onEdit, onCopy }) {
+// 复制按钮：点击后 1.5 秒内显示对勾，作为复制成功反馈
+function CopyButton({ text, className, title = '复制' }) {
+  const [copied, setCopied] = useState(false);
+  const handleClick = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(String(text ?? ''));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error('复制失败:', err);
+    }
+  };
+  return (
+    <button type="button" onClick={handleClick} className={className} title={copied ? '已复制' : title} aria-label={title}>
+      {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+    </button>
+  );
+}
+
+const LogItem = React.memo(function LogItem({ log, theme, logViewMode, onEdit }) {
   const isSent = log.type === 'sent';
   const isReceived = log.type === 'received';
   const isSystem = log.type === 'system';
@@ -134,14 +146,13 @@ const LogItem = React.memo(function LogItem({ log, theme, logViewMode, onEdit, o
   const tagLabel = isSent ? 'TX' : isReceived ? 'RX' : isError ? 'ERR' : 'SYS';
 
   const tagCls = isSent
-    ? (theme === 'light' ? 'text-blue-600' : 'text-blue-400/80')
+    ? (theme === 'light' ? 'text-[#2563eb]' : 'text-[#60a5fa]/80')
     : isReceived
       ? (theme === 'light' ? 'text-emerald-600' : 'text-emerald-400/70')
       : isError
         ? (theme === 'light' ? 'text-rose-600' : 'text-rose-400/80')
         : (theme === 'light' ? 'text-slate-500' : 'text-gray-400');
 
-  const panelCls = theme === 'light' ? 'bg-white border-slate-200/70' : 'bg-[#0A0A0A] border-white/5';
   const mutedText = theme === 'light' ? 'text-slate-400' : 'text-gray-500';
   const secondaryText = theme === 'light' ? 'text-slate-600' : 'text-gray-300';
   const hoverBtn = theme === 'light' ? 'text-slate-400 hover:text-slate-700' : 'text-gray-500 hover:text-gray-200';
@@ -149,35 +160,29 @@ const LogItem = React.memo(function LogItem({ log, theme, logViewMode, onEdit, o
   const showEdit = !!log.topic && typeof log.payload === 'string' && onEdit;
 
   return (
-    <div className="relative group">
-      <div className="pb-1">
-        <div className="flex items-center gap-3 mb-1.5">
-          <span className={`text-[10px] font-mono ${mutedText} shrink-0`}>{log.timestamp}</span>
-          <span className={`text-[9px] font-bold tracking-wider uppercase ${tagCls}`}>{tagLabel}</span>
-          {log.topic && <span className={`text-[11px] font-mono truncate opacity-90 ${secondaryText}`}>{log.topic}</span>}
-          <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            {showEdit && (
-              <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(log); }} className={`p-1 ${hoverBtn} rounded transition-colors`} title="填充到发送区编辑">
+    <div className="group flex flex-col gap-1.5 py-2.5 border-b border-gray-100 dark:border-white/5 hover:bg-gray-50/80 dark:hover:bg-white/[0.02] transition-colors rounded-lg px-2 -mx-2">
+      <div className="flex items-center gap-3 text-[11px] w-full">
+        <span className={`text-[11px] font-mono ${mutedText} shrink-0 font-medium`}>{log.timestamp}</span>
+        <span className={`text-[11px] font-bold tracking-wider uppercase shrink-0 ${tagCls}`}>{tagLabel}</span>
+        {log.topic && <span className={`text-[11px] font-mono truncate opacity-90 ${secondaryText}`} title={log.topic}>{log.topic}</span>}
+        <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+          {showEdit && (
+            <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(log); }} className={`p-1 ${hoverBtn} rounded-lg transition-colors`} title="填充到发送区编辑">
                 <Edit2 className="w-3 h-3" />
               </button>
-            )}
-            {onCopy && (
-              <button type="button" onClick={() => onCopy(log.payload)} className={`p-1 ${hoverBtn} rounded transition-colors`} title="复制 Payload">
-                <Copy className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-        </div>
-        <div className={`rounded-lg border px-3 py-2 text-[12px] font-mono leading-relaxed break-all whitespace-pre-wrap ${panelCls}`}>
-          {logViewMode === 'hex' ? (
-            <span className={theme === 'light' ? 'text-purple-600' : 'text-gray-400'}>{toHex(log.payload)}</span>
-          ) : typeof log.payload === 'string' && isJson(log.payload) ? (
-            <JsonHighlight text={tryFormatJson(log.payload)} theme={theme} />
-          ) : (
-            String(log.payload ?? '')
           )}
+          <CopyButton text={log.payload} title="复制 Payload" className={`p-1 ${hoverBtn} rounded-lg transition-colors`} />
         </div>
       </div>
+      <pre className="text-[13px] leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap break-all">
+        {logViewMode === 'hex' ? (
+          <span className={theme === 'light' ? 'text-purple-600' : 'text-gray-400'}>{toHex(log.payload)}</span>
+        ) : typeof log.payload === 'string' && isJson(log.payload) ? (
+          <JsonHighlight text={tryFormatJson(log.payload)} theme={theme} />
+        ) : (
+          String(log.payload ?? '')
+        )}
+      </pre>
     </div>
   );
 });
@@ -202,17 +207,8 @@ export default function MqttDebugger() {
     }
   })();
 
-  // --- 用户与云同步状态 ---
-  const [user, setUser] = useState(null);
-  const [syncSpaceId, setSyncSpaceId] = useState(''); 
-  const [inputSpaceId, setInputSpaceId] = useState('');
-  const [isCloudConnected, setIsCloudConnected] = useState(false);
-  const [showSyncModal, setShowSyncModal] = useState(false);
-  const [syncEncryptEnabled, setSyncEncryptEnabled] = useState(() => localStorage.getItem('mqtt_sync_encrypt') !== '0');
-  const [syncPassphrase, setSyncPassphrase] = useState(() => sessionStorage.getItem('mqtt_sync_passphrase') || '');
-  const [rememberPassphrase, setRememberPassphrase] = useState(() => sessionStorage.getItem('mqtt_sync_remember') === '1');
-  const [cloudCryptoError, setCloudCryptoError] = useState('');
-  
+  const [showBackupModal, setShowBackupModal] = useState(false);
+
   // --- 通用模态框状态 ---
   const [modal, setModal] = useState({ 
     open: false, type: 'input', title: '', inputValue: '', onConfirm: null 
@@ -259,6 +255,9 @@ export default function MqttDebugger() {
     };
   });
 
+  // 记录协议是否为用户手动修改（用于只对用户主动选的 wss 显示 SSL 提示）
+  const protocolTouched = useRef(false);
+
   const [advancedConfig, setAdvancedConfig] = useState({
     keepalive: 60, clean: true, willEnabled: false,
     willTopic: 'last/will', willPayload: 'offline', willQos: 0, willRetain: false,
@@ -266,10 +265,13 @@ export default function MqttDebugger() {
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [configCollapsed, setConfigCollapsed] = useState(false); // 新增：连接后折叠配置面板
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const [subscriptions, setSubscriptions] = useState([]);
   const [subscriptionsCollapsed, setSubscriptionsCollapsed] = useState(true);
   const [subTopic, setSubTopic] = useState('test/topic');
+  const subTopicInputRef = useRef(null);
+  const [newTopicOpen, setNewTopicOpen] = useState(false);
   const [subMonitorSelectedTopics, setSubMonitorSelectedTopics] = useState([]);
   
   const [pubTopic, setPubTopic] = useState('test/topic');
@@ -277,6 +279,13 @@ export default function MqttDebugger() {
   const [pubQoS, setPubQoS] = useState(0);
   const [pubRetain, setPubRetain] = useState(false); 
   const pubMessageTextareaRef = useRef(null);
+  // 发送框随内容自动增高（上限 38vh，随窗口/屏幕自适应）
+  useEffect(() => {
+    const el = pubMessageTextareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [pubMessage]);
   const [publishEditorOpen, setPublishEditorOpen] = useState(false);
   const [publishEditorTopic, setPublishEditorTopic] = useState('');
   const [publishEditorPayload, setPublishEditorPayload] = useState('');
@@ -347,6 +356,7 @@ export default function MqttDebugger() {
   // 日志
   const [logs, setLogs] = useState([]);
   const [logFilter, setLogFilter] = useState('');
+  const [logTypeFilter, setLogTypeFilter] = useState('all');
   const logFilterInputRef = useRef(null);
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [logViewMode, setLogViewMode] = useState('text');
@@ -377,7 +387,6 @@ export default function MqttDebugger() {
   const [eventFilter, setEventFilter] = useState('');
 
   // 消息统计
-  const [msgStats, setMsgStats] = useState({ sent: 0, received: 0, errors: 0 });
 
   // 定时发送
   const [timerEnabled, setTimerEnabled] = useState(false);
@@ -444,46 +453,50 @@ export default function MqttDebugger() {
   // 主题配色
   const t = theme === 'light' ? {
   // 亮色主题
-    bg: 'bg-[#F8FAFC]',
-    bgSecondary: 'bg-white',
-    bgTertiary: 'bg-slate-50',
-    bgHover: 'hover:bg-slate-100',
-    bgInput: 'bg-white',
-    border: 'border-slate-200/80',
-    borderLight: 'border-slate-200/60',
-    text: 'text-slate-900',
+    bg: 'bg-[#F9FAFB]',
+    bgSecondary: 'bg-white/60',
+    bgTertiary: 'bg-gray-100/50',
+    bgHover: 'hover:bg-gray-100',
+    bgInput: 'bg-gray-100/70',
+    border: 'border-gray-200/50',
+    borderLight: 'border-gray-200/40',
+    text: 'text-gray-800',
     textSecondary: 'text-slate-600',
-    textMuted: 'text-slate-400',
+    textMuted: 'text-slate-500',
     shadow: 'shadow-sm',
-    shadowLg: 'shadow-lg shadow-slate-200/40',
-    card: 'bg-white border-slate-200/70',
-    cardHover: 'hover:border-slate-300',
+    shadowLg: 'shadow-lg shadow-gray-200/40',
+    card: 'bg-white/80 border-gray-200/50',
+    cardHover: 'hover:border-gray-300',
     accent: 'blue',
-    accentBg: 'bg-blue-600',
-    accentText: 'text-blue-600',
+    accentBg: 'bg-blue-500',
+    accentText: 'text-blue-500',
     accentLight: 'bg-blue-50',
+    floatingPanel: 'bg-white/80 backdrop-blur-xl shadow-lg shadow-gray-200/40 border border-gray-200/50 rounded-xl',
   } : {
     // 暗色主题
-    bg: 'bg-[#050505]',
-    bgSecondary: 'bg-[#0A0A0A]',
+    bg: 'bg-[#09090B]',
+    bgSecondary: 'bg-[#18181B]/60',
     bgTertiary: 'bg-white/[0.03]',
     bgHover: 'hover:bg-white/[0.05]',
-    bgInput: 'bg-[#0A0A0A]',
-    border: 'border-white/[0.05]',
+    bgInput: 'bg-zinc-900/50',
+    border: 'border-white/5',
     borderLight: 'border-white/[0.05]',
     text: 'text-gray-200',
-    textSecondary: 'text-gray-400',
-    textMuted: 'text-gray-500',
+    textSecondary: 'text-slate-400',
+    textMuted: 'text-slate-500',
     shadow: 'shadow-none',
     shadowLg: 'shadow-[0_8px_30px_rgba(0,0,0,0.4)]',
-    card: 'bg-[#0A0A0A] border-white/[0.05]',
-    cardHover: 'hover:border-white/[0.10]',
+    card: 'bg-[#18181B]/80 border-white/10',
+    cardHover: 'hover:border-white/[0.15]',
     accent: 'blue',
-    accentBg: 'bg-blue-600',
-    accentText: 'text-blue-400',
-    accentLight: 'bg-blue-500/10',
+    accentBg: 'bg-blue-400',
+    accentText: 'text-blue-300',
+    accentLight: 'bg-blue-400/10',
+    floatingPanel: 'bg-[#18181B]/80 backdrop-blur-xl shadow-xl shadow-black/40 border border-white/10 rounded-xl',
   };
   const themedSelectClass = `themed-select ${t.bgInput} border ${t.border} outline-none transition-all ${t.text}`;
+  const labelStyle = 'block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider pl-1';
+  const configInputStyle = `w-full ${t.bgInput} border ${t.border} rounded-xl px-3 py-2.5 text-[13px] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all disabled:opacity-50 ${t.text}`;
 
   // --- 初始化逻辑 ---
   useEffect(() => {
@@ -558,17 +571,9 @@ export default function MqttDebugger() {
   }, [isDesktopShell]);
 
   useEffect(() => {
-    if (isFirebaseAvailable && auth) {
-      signInAnonymously(auth).catch(e => console.error("Auth failed:", e));
-      return onAuthStateChanged(auth, setUser);
-    }
-  }, []);
-
-  useEffect(() => {
     const localConfigs = localStorage.getItem('mqtt_configs');
     const localActions = localStorage.getItem('mqtt_quick_actions');
     const localSubs = localStorage.getItem('mqtt_subscriptions');
-    const lastSyncId = localStorage.getItem('mqtt_sync_id');
     if (localConfigs) setSavedConfigs(JSON.parse(localConfigs));
     if (localActions) setQuickActions(JSON.parse(localActions));
     if (localSubs) {
@@ -582,136 +587,19 @@ export default function MqttDebugger() {
         // ignore
       }
     }
-    if (lastSyncId) { setSyncSpaceId(lastSyncId); setInputSpaceId(lastSyncId); }
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem('mqtt_sync_encrypt', syncEncryptEnabled ? '1' : '0');
-  }, [syncEncryptEnabled]);
-
-  useEffect(() => {
-    sessionStorage.setItem('mqtt_sync_remember', rememberPassphrase ? '1' : '0');
-    if (rememberPassphrase) sessionStorage.setItem('mqtt_sync_passphrase', syncPassphrase);
-    else sessionStorage.removeItem('mqtt_sync_passphrase');
-  }, [rememberPassphrase, syncPassphrase]);
-
-  // --- 云同步监听 ---
-  useEffect(() => {
-    if (!isFirebaseAvailable || !user || !syncSpaceId) { setIsCloudConnected(false); return; }
-    try {
-      const docRef = doc(db, 'artifacts', appId, 'public', 'data', `mqtt_space_${syncSpaceId}`);
-      setIsCloudConnected(true);
-      setCloudCryptoError('');
-      addLog('system', '', `已连接云同步空间: ${syncSpaceId}`);
-
-      const unsubscribe = onSnapshot(docRef, (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const applyPayload = (payload) => {
-            if (Array.isArray(payload?.configs)) {
-              setSavedConfigs(payload.configs);
-              localStorage.setItem('mqtt_configs', JSON.stringify(payload.configs));
-            }
-            if (Array.isArray(payload?.actions)) {
-              setQuickActions(payload.actions);
-              localStorage.setItem('mqtt_quick_actions', JSON.stringify(payload.actions));
-            }
-            if (Array.isArray(payload?.subscriptions)) {
-              setSubscriptions(payload.subscriptions);
-              localStorage.setItem('mqtt_subscriptions', JSON.stringify(payload.subscriptions));
-              lastSubscriptionsRef.current = payload.subscriptions;
-            }
-          };
-
-          if (data.enc) {
-            if (!syncPassphrase) {
-              setCloudCryptoError('该 Space ID 使用了端到端加密，需要输入口令才能同步。');
-              addLog('error', '', '云同步需要口令：请在"云同步"里输入口令后重新连接。');
-              return;
-            }
-            decryptJson(syncPassphrase, data.enc)
-              .then((payload) => {
-                setCloudCryptoError('');
-                applyPayload(payload);
-              })
-              .catch((err) => {
-                const msg = `解密失败：${String(err?.message || err)}`;
-                setCloudCryptoError(msg);
-                addLog('error', '', msg);
-              });
-            return;
-          }
-
-          applyPayload(data);
-        } else {
-          saveToCloud(savedConfigs, quickActions, lastSubscriptionsRef.current);
-        }
-      }, (error) => {
-        console.error("Sync error:", error);
-        setIsCloudConnected(false);
-        addLog('error', '', '云同步连接中断');
-      });
-      return () => unsubscribe();
-    } catch (e) {
-      console.error("Firestore init error", e);
-      setIsCloudConnected(false);
-    }
-  }, [user, syncSpaceId, syncPassphrase]);
-
-  const saveToCloud = async (newConfigs, newActions, newSubscriptions) => {
-    if (!isFirebaseAvailable || !user || !syncSpaceId) return;
-    try {
-      const docRef = doc(db, 'artifacts', appId, 'public', 'data', `mqtt_space_${syncSpaceId}`);
-      const mergedPayload = {
-        configs: newConfigs ?? savedConfigs,
-        actions: newActions ?? quickActions,
-        subscriptions: newSubscriptions ?? lastSubscriptionsRef.current,
-      };
-
-      if (syncEncryptEnabled) {
-        if (!syncPassphrase) throw new Error('云同步已启用加密，但未输入口令');
-        const enc = await encryptJson(syncPassphrase, mergedPayload);
-        await setDoc(
-          docRef,
-          {
-            enc,
-            encrypted: true,
-            updatedAt: Date.now(),
-            updatedBy: user.uid
-          },
-          { merge: true },
-        );
-      } else {
-        await setDoc(
-          docRef,
-          {
-            configs: mergedPayload.configs,
-            actions: mergedPayload.actions,
-            subscriptions: mergedPayload.subscriptions,
-            encrypted: false,
-            updatedAt: Date.now(),
-            updatedBy: user.uid
-          },
-          { merge: true },
-        );
-      }
-    } catch { addLog('error', '', '云端保存失败'); }
-  };
 
   const updateData = (type, newData) => {
     if (type === 'configs') {
       setSavedConfigs(newData);
       localStorage.setItem('mqtt_configs', JSON.stringify(newData));
-      if (syncSpaceId) saveToCloud(newData, null, null);
     } else if (type === 'actions') {
       setQuickActions(newData);
       localStorage.setItem('mqtt_quick_actions', JSON.stringify(newData));
-      if (syncSpaceId) saveToCloud(null, newData, null);
     } else if (type === 'subscriptions') {
       setSubscriptions(newData);
       localStorage.setItem('mqtt_subscriptions', JSON.stringify(newData));
       lastSubscriptionsRef.current = newData;
-      if (syncSpaceId) saveToCloud(null, null, newData);
     }
   };
 
@@ -720,7 +608,6 @@ export default function MqttDebugger() {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       localStorage.setItem('mqtt_subscriptions', JSON.stringify(next));
       lastSubscriptionsRef.current = next;
-      if (syncSpaceId) saveToCloud(null, null, next);
       return next;
     });
   };
@@ -843,30 +730,6 @@ export default function MqttDebugger() {
   };
 
   // --- 业务逻辑 ---
-  const handleConnectSync = () => {
-    if (!isFirebaseAvailable) {
-      alert("当前环境未配置 Firebase，无法使用云同步功能。请检查配置或仅使用本地功能。");
-      return;
-    }
-    if (!inputSpaceId.trim()) return;
-    if (syncEncryptEnabled && !syncPassphrase) {
-      alert('已启用端到端加密：请先输入"同步口令"。');
-      return;
-    }
-    const id = inputSpaceId.trim();
-    setSyncSpaceId(id);
-    localStorage.setItem('mqtt_sync_id', id);
-    setShowSyncModal(false);
-  };
-
-  const handleDisconnectSync = () => {
-    setSyncSpaceId('');
-    localStorage.removeItem('mqtt_sync_id');
-    setIsCloudConnected(false);
-    setShowSyncModal(false);
-    addLog('system', '', '已断开云同步');
-  };
-
   const handleSaveConfig = () => {
     openInputModal("配置名称", connection.name || "新配置", (name) => {
       if (!name) return;
@@ -892,7 +755,8 @@ export default function MqttDebugger() {
   };
 
   const handleSaveAction = () => {
-    openInputModal("给指令起个名字 (如: 开灯)", "新指令", (name) => {
+    const defaultName = String(pubTopic || '').split('/').filter(Boolean).pop() || '新指令';
+    openInputModal("给指令起个名字 (如: 开灯)", defaultName, (name) => {
       if (!name) return;
       const newAction = { 
         id: Date.now(), name, topic: pubTopic, payload: pubMessage, 
@@ -929,9 +793,6 @@ export default function MqttDebugger() {
   const handleEditFromLog = useCallback((log) => {
     loadPublishDraft({ topic: log.topic, payload: log.payload });
   }, [loadPublishDraft]);
-  const handleCopyPayload = useCallback((payload) => {
-    navigator.clipboard.writeText(String(payload ?? ''));
-  }, []);
 
   const toggleQuickActionGroupCollapsed = (collapseKey) => {
     const root = quickActionsScrollRef.current;
@@ -1076,14 +937,18 @@ export default function MqttDebugger() {
 
   // UX: 打开弹窗时沿用上次展开/收起状态（会话内记忆）。
 
+  // 搜索框当前的第一个匹配项（空查询返回 undefined，避免误发）。搜索定位与 Enter 共用。
+  const findFirstMatchedAction = () => {
+    const q = (quickActionQuery || '').trim().toLowerCase();
+    if (!q) return undefined;
+    const all = Array.isArray(quickActions) ? quickActions : [];
+    return all.find((a) => `${a?.name || ''} ${a?.topic || ''} ${a?.payload || ''}`.toLowerCase().includes(q));
+  };
+
   // 搜索时自动展开命中的分组并滚动到对应指令。
   useEffect(() => {
     if (!showQuickActionsPanel) return;
-    const q = (quickActionQuery || '').trim().toLowerCase();
-    if (!q) return;
-    const all = Array.isArray(quickActions) ? quickActions : [];
-    const match = (a) => `${a?.name || ''} ${a?.topic || ''} ${a?.payload || ''}`.toLowerCase().includes(q);
-    const first = all.find(match);
+    const first = findFirstMatchedAction();
     if (!first) return;
 
     const { group } = getActionGroup(first);
@@ -1186,13 +1051,6 @@ export default function MqttDebugger() {
 
   // MQTT相关函数
   const addLog = (type, topic, payload, details = '') => {
-    // 更新统计
-    setMsgStats(prev => ({
-      sent: type === 'sent' ? prev.sent + 1 : prev.sent,
-      received: type === 'received' ? prev.received + 1 : prev.received,
-      errors: type === 'error' ? prev.errors + 1 : prev.errors
-    }));
-
     setLogs(prev => {
       logIdRef.current += 1;
       const newLogs = [...prev, { id: logIdRef.current, timestamp: new Date().toLocaleTimeString(), type, topic, payload, details }];
@@ -1202,6 +1060,7 @@ export default function MqttDebugger() {
 
   // 协议改变时智能更新端口
   const handleProtocolChange = (newProtocol) => {
+    protocolTouched.current = true;
     const portInfo = PROTOCOL_PORT_MAP[newProtocol];
     setConnection(prev => ({
       ...prev,
@@ -1669,6 +1528,12 @@ export default function MqttDebugger() {
         setQuickActionQuery('');
         return;
       }
+      // Ctrl/Cmd + P: 打开快捷指令面板（搜索框自动聚焦）
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key?.toLowerCase() === 'p') {
+        e.preventDefault();
+        setShowQuickActionsPanel(true);
+        return;
+      }
       // Ctrl/Cmd + Enter: 发送消息
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
@@ -1684,7 +1549,6 @@ export default function MqttDebugger() {
       if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
         e.preventDefault();
         setLogs([]);
-        setMsgStats({ sent: 0, received: 0, errors: 0 });
       }
       // Ctrl/Cmd + K: 连接/断开切换
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -1700,11 +1564,6 @@ export default function MqttDebugger() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [client, connectStatus, reconnectCount, eventCenterOpen, pubTopic, pubMessage, pubQoS, pubRetain, showQuickActionsPanel, publishEditorOpen, publishEditorTopic, publishEditorPayload]);
 
-  // 重置统计
-  const resetStats = () => {
-    setMsgStats({ sent: 0, received: 0, errors: 0 });
-  };
-  
   // Formatters
   const formatDuration = (s) => `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
 
@@ -1738,6 +1597,7 @@ export default function MqttDebugger() {
   );
   const messageLogs = logs.filter(isMessageLog);
   const filteredMessageLogs = messageLogs
+    .filter((log) => (logTypeFilter === 'all' ? true : logTypeFilter === 'in' ? log.type === 'received' : log.type === 'sent'))
     .filter((log) => (subMonitorSelectedTopics.length === 0 || subMonitorSelectedTopics.some((t) => mqttTopicMatches(t, log.topic))))
     .filter((log) => (
       !logFilter || ((log.topic + log.payload + log.type + (log.details || '')).toLowerCase().includes(logFilter.toLowerCase()))
@@ -1806,7 +1666,7 @@ export default function MqttDebugger() {
       purple: 'bg-purple-500/10 text-purple-400 border-purple-500/20'
     };
     return (
-      <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:border-slate-600 transition-all duration-300 hover:shadow-lg hover:shadow-black/20 group">
+      <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50 hover:border-slate-600 transition-all duration-300 hover:shadow-lg hover:shadow-black/20 group">
         <div className="flex justify-between items-start mb-3">
           <div className={`p-2 rounded-xl ${colorClasses[color]} border`}>
             <IconComp className="w-4 h-4" />
@@ -1832,20 +1692,20 @@ export default function MqttDebugger() {
       {/* 模态框 */}
       {modal.open && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
-          <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-sm w-full border ${t.border} p-6 transform scale-100`}>
+          <div className={`${t.floatingPanel} max-w-sm w-full p-6 transform scale-100`}>
             <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${t.text}`}>
               {modal.type === 'confirm' && <AlertCircle className="w-5 h-5 text-amber-500" />}
               {modal.title}
             </h3>
             {modal.type === 'input' && (
               <input
-                autoFocus type="text" value={modal.inputValue} onChange={(e) => setModal({...modal, inputValue: e.target.value})} onKeyDown={(e) => e.key === 'Enter' && handleModalSubmit()}
+                autoFocus onFocus={(e) => e.target.select()} type="text" value={modal.inputValue} onChange={(e) => setModal({...modal, inputValue: e.target.value})} onKeyDown={(e) => e.key === 'Enter' && handleModalSubmit()}
                 className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none mb-4 transition-all ${t.text}`}
               />
             )}
             <div className="flex justify-end gap-3">
               <button onClick={() => setModal({...modal, open: false})} className={`px-4 py-2 ${t.bgTertiary} ${t.bgHover} rounded-xl text-sm font-medium transition-colors ${t.textSecondary}`}>取消</button>
-              <button onClick={handleModalSubmit} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg ${modal.type === 'confirm' ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20'}`}>{modal.type === 'confirm' ? '确定删除' : '确定保存'}</button>
+              <button onClick={handleModalSubmit} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg ${modal.type === 'confirm' ? 'bg-rose-500 hover:bg-rose-600 text-white shadow-rose-500/20' : 'bg-blue-500 hover:bg-blue-600 text-white shadow-blue-500/20'}`}>{modal.type === 'confirm' ? '确定删除' : '确定保存'}</button>
             </div>
           </div>
         </div>
@@ -1859,7 +1719,7 @@ export default function MqttDebugger() {
             onClick={() => setPublishEditorOpen(false)}
             className="absolute inset-0"
           />
-          <div className={`relative ${t.bgSecondary} rounded-2xl shadow-2xl max-w-3xl w-full border ${t.border} p-6`}>
+          <div className={`relative ${t.floatingPanel} max-w-3xl w-full p-6`}>
             <div className="flex items-center justify-between gap-3 mb-4">
               <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}>
                 <Edit2 className="w-5 h-5 text-blue-500" />
@@ -1895,7 +1755,7 @@ export default function MqttDebugger() {
                   className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-y focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all min-h-[260px] ${t.text}`}
                   placeholder='Payload (e.g. {"msg": "Hello"})'
                 />
-                <div className={`text-[10px] mt-1 ${t.textMuted}`}>快捷键：Ctrl/Cmd + Enter 应用并关闭</div>
+                <div className={`text-[11px] mt-1 ${t.textMuted}`}>快捷键：Ctrl/Cmd + Enter 应用并关闭</div>
               </div>
             </div>
 
@@ -1910,7 +1770,7 @@ export default function MqttDebugger() {
               <button
                 type="button"
                 onClick={applyPublishEditor}
-                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20"
+                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-blue-500 hover:bg-blue-600 text-white shadow-blue-500/20"
               >
                 应用
               </button>
@@ -1921,7 +1781,7 @@ export default function MqttDebugger() {
 
       {showQuickActionsPanel && (
         <div className="fixed inset-0 bg-black/50 z-[65] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
-          <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-2xl w-full border ${t.border} p-6`}>
+          <div className={`${t.floatingPanel} max-w-2xl w-full p-6`}>
             <div className="flex items-center justify-between gap-3 mb-4">
               <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}>
                 <Zap className="w-5 h-5 text-amber-500" />
@@ -1943,7 +1803,16 @@ export default function MqttDebugger() {
                   autoFocus
                   value={quickActionQuery}
                   onChange={(e) => setQuickActionQuery(e.target.value)}
-                  placeholder="搜索 名称 / Topic / Payload..."
+                  onKeyDown={(e) => {
+                    // 输入法组词中的回车只是确认候选，不触发发送
+                    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+                    const first = findFirstMatchedAction();
+                    if (!first) return;
+                    e.preventDefault();
+                    if (e.shiftKey) fillQuickAction(first);
+                    else sendQuickAction(first);
+                  }}
+                  placeholder="搜索 名称 / Topic / Payload...　Enter 发送 · Shift+Enter 填入"
                   className={`flex-1 bg-transparent text-sm outline-none ${t.text}`}
                 />
               </div>
@@ -1963,7 +1832,7 @@ export default function MqttDebugger() {
                 <div className="flex items-center gap-2">
                   <LayoutDashboard className={`w-4 h-4 ${t.textMuted}`} />
                   <span className={`text-xs font-semibold ${t.textSecondary}`}>分组方式</span>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${t.border} ${t.textMuted}`}>
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full border ${t.border} ${t.textMuted}`}>
                     {quickActionGroupMode === 'smart' ? '智能' : 'Topic 前缀'}
                   </span>
                 </div>
@@ -1980,7 +1849,7 @@ export default function MqttDebugger() {
                   onClick={() => setQuickActionGroupMode('smart')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
                     quickActionGroupMode === 'smart'
-                      ? (theme === 'light' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-blue-500/20 border-blue-500/40 text-blue-200')
+                      ? ACTIVE.info
                       : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
                   }`}
                   title="手动分组优先；未设置时自动按名称前缀与 Topic 归类"
@@ -1992,7 +1861,7 @@ export default function MqttDebugger() {
                   onClick={() => setQuickActionGroupMode('topic-prefix')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
                     quickActionGroupMode === 'topic-prefix'
-                      ? (theme === 'light' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-blue-500/20 border-blue-500/40 text-blue-200')
+                      ? ACTIVE.info
                       : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
                   }`}
                   title="手动分组优先；其余按 Topic 前缀段数归类"
@@ -2010,9 +1879,9 @@ export default function MqttDebugger() {
                         key={n}
                         type="button"
                         onClick={() => setQuickActionTopicPrefixDepth(n)}
-                        className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-all ${
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
                           active
-                            ? (theme === 'light' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200')
+                            ? ACTIVE.ok
                             : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
                         }`}
                         title="按 Topic 前几段分组"
@@ -2063,7 +1932,7 @@ export default function MqttDebugger() {
                         <div className={`font-bold text-sm ${t.text} truncate`} title={action?.name}>{displayNameOverride || action?.name}</div>
                         <div className={`text-[11px] ${t.textMuted} truncate mt-1`}>{action?.topic}</div>
                         {resolvedGroup && resolvedGroup !== '未分组' && (
-                          <div className={`text-[10px] ${t.textMuted} truncate mt-1`}>分组：{resolvedGroup}</div>
+                          <div className={`text-[11px] ${t.textMuted} truncate mt-1`}>分组：{resolvedGroup}</div>
                         )}
                         <div className={`text-[11px] ${t.textSecondary} truncate mt-1 font-mono`}>{String(action?.payload || '')}</div>
                       </div>
@@ -2112,10 +1981,10 @@ export default function MqttDebugger() {
                         >
                           <Trash2 className={`w-4 h-4 ${t.textMuted}`} />
                         </button>
-                        <span className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5`}>
+                        <span className={`text-[11px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5`}>
                           QoS {action?.qos ?? 0}{action?.retain ? ' · Retain' : ''}
                         </span>
-                        <div className={`px-3 py-1 rounded-lg text-xs font-bold ${theme === 'light' ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/20 text-amber-300'} flex items-center gap-1`}>
+                        <div className={`px-3 py-1 rounded-lg text-xs font-bold ${TONE.warn} flex items-center gap-1`}>
                           <Zap className="w-3 h-3" />
                           发送
                         </div>
@@ -2179,7 +2048,7 @@ export default function MqttDebugger() {
                                     <ChevronUp className={`w-4 h-4 ${t.textMuted}`} />
                                   )}
                                   <div className={`text-sm font-bold ${t.text} truncate`}>{group}</div>
-                                  <div className={`text-[10px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5 shrink-0`}>
+                                  <div className={`text-[11px] ${t.textMuted} border ${t.border} rounded-full px-2 py-0.5 shrink-0`}>
                                     {rows.length}
                                   </div>
                                 </div>
@@ -2240,7 +2109,7 @@ export default function MqttDebugger() {
 
       {editingAction && (
         <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200">
-          <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-lg w-full border ${t.border} p-6`}>
+          <div className={`${t.floatingPanel} max-w-lg w-full p-6`}>
             <div className="flex items-center justify-between gap-3 mb-4">
               <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}>
                 <Edit2 className="w-5 h-5 text-blue-500" />
@@ -2285,7 +2154,7 @@ export default function MqttDebugger() {
                   className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-3 text-sm font-mono resize-y focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all min-h-[120px] ${t.text}`}
                   placeholder='{"msg": "Hello"}'
                 />
-                <div className={`text-[10px] mt-1 ${t.textMuted}`}>Ctrl/Cmd + Enter 保存</div>
+                <div className={`text-[11px] mt-1 ${t.textMuted}`}>Ctrl/Cmd + Enter 保存</div>
               </div>
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
@@ -2295,9 +2164,9 @@ export default function MqttDebugger() {
                       key={q}
                       type="button"
                       onClick={() => setEditingAction({ ...editingAction, qos: q })}
-                      className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-all ${
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
                         editingAction.qos === q
-                          ? (theme === 'light' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-blue-500/20 border-blue-500/40 text-blue-200')
+                          ? ACTIVE.info
                           : `${t.bgSecondary} ${t.border} ${t.textSecondary} ${t.bgHover}`
                       }`}
                     >
@@ -2327,7 +2196,7 @@ export default function MqttDebugger() {
               <button
                 type="button"
                 onClick={handleSaveEditAction}
-                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20"
+                className="px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg bg-blue-500 hover:bg-blue-600 text-white shadow-blue-500/20"
               >
                 保存
               </button>
@@ -2344,13 +2213,13 @@ export default function MqttDebugger() {
         onChange={handleImportBackupFileChange}
       />
 
-      {/* 云同步弹窗 */}
-      {showSyncModal && (
+      {/* 备份弹窗 */}
+      {showBackupModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-md">
-          <div className={`${t.bgSecondary} rounded-2xl shadow-2xl max-w-md w-full border ${t.border} p-6`}>
+          <div className={`${t.floatingPanel} max-w-md w-full p-6`}>
             <div className="flex justify-between items-center mb-4">
-              <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}><Settings className="w-5 h-5 text-blue-500"/> 同步与备份</h3>
-              <button onClick={() => setShowSyncModal(false)} className={`${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded-lg transition-colors`}><X className="w-5 h-5"/></button>
+              <h3 className={`text-lg font-bold flex items-center gap-2 ${t.text}`}><Settings className="w-5 h-5 text-blue-500"/> 备份</h3>
+              <button onClick={() => setShowBackupModal(false)} className={`${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded-lg transition-colors`}><X className="w-5 h-5"/></button>
             </div>
 
             <div className={`p-4 ${t.bgTertiary} border ${t.border} rounded-xl space-y-3 mb-4`}>
@@ -2388,226 +2257,153 @@ export default function MqttDebugger() {
                 <span>导出（含密码）</span>
               </button>
             </div>
-            {!isFirebaseAvailable ? (
-               <div className="p-4 bg-amber-100 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700/50 rounded-xl text-amber-800 dark:text-amber-200 text-sm"><p className="font-bold mb-1">云同步未启用</p><p className="text-xs opacity-80">当前环境未配置 Firebase，仅可使用本地备份/导入导出。</p></div>
-            ) : (
-              <>
-                <p className={`text-sm ${t.textSecondary} mb-4`}>输入一个唯一的 <b className={t.text}>Space ID</b>，所有使用该 ID 的设备将实时同步数据。</p>
-                <div className="space-y-4">
-                  <div className="flex gap-2">
-                    <input type="text" value={inputSpaceId} onChange={(e) => setInputSpaceId(e.target.value)} placeholder="Space ID" className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-4 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all ${t.text}`}/>
-                    <button
-                      onClick={() => {
-                        const rand = (typeof crypto !== 'undefined' && crypto.randomUUID)
-                          ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
-                          : `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`.slice(0, 16);
-                        setInputSpaceId(`space_${rand}`);
-                      }}
-                      className={`px-4 py-2.5 ${t.bgTertiary} ${t.bgHover} rounded-xl text-xs font-medium transition-colors`}
-                    >
-                      随机
-                    </button>
-                  </div>
-
-                  <div className={`p-4 ${t.bgTertiary} border ${t.border} rounded-xl space-y-3`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className={`text-sm font-semibold ${t.text}`}>端到端加密（推荐）</div>
-                        <div className={`text-xs ${t.textMuted}`}>开启后云端仅存密文，不上传明文配置</div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={syncEncryptEnabled}
-                        onChange={(e) => setSyncEncryptEnabled(e.target.checked)}
-                        className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-emerald-600"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className={`text-xs ${t.textMuted}`}>同步口令</label>
-                      <input
-                        type="password"
-                        value={syncPassphrase}
-                        onChange={(e) => setSyncPassphrase(e.target.value)}
-                        disabled={!syncEncryptEnabled}
-                        placeholder={syncEncryptEnabled ? '请输入口令（用于加密/解密）' : '关闭加密时无需口令'}
-                        className={`w-full ${t.bgInput} border ${t.border} rounded-xl px-4 py-2 text-sm outline-none transition-all ${t.text} ${
-                          syncEncryptEnabled ? 'focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20' : 'opacity-60'
-                        }`}
-                      />
-                      <label className={`flex items-center gap-2 text-xs ${t.textSecondary}`}>
-                        <input
-                          type="checkbox"
-                          checked={rememberPassphrase}
-                          onChange={(e) => setRememberPassphrase(e.target.checked)}
-                          disabled={!syncEncryptEnabled}
-                          className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-emerald-600"
-                        />
-                        <span>在本机记住口令（本次会话）</span>
-                      </label>
-                    </div>
-
-                    {cloudCryptoError && (
-                      <div className="p-3 bg-rose-100 dark:bg-rose-900/20 border border-rose-300 dark:border-rose-700/50 rounded-xl text-rose-700 dark:text-rose-200 text-xs whitespace-pre-wrap">
-                        {cloudCryptoError}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-3 pt-2">
-                    <button onClick={handleConnectSync} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-xl font-bold shadow-lg shadow-blue-500/20 transition-all">开启同步</button>
-                    {syncSpaceId && <button onClick={handleDisconnectSync} className="px-4 bg-rose-100 hover:bg-rose-200 dark:bg-rose-600/20 dark:hover:bg-rose-600/30 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-600/30 rounded-xl font-medium transition-colors">断开</button>}
-                  </div>
-                </div>
-              </>
-            )}
           </div>
         </div>
       )}
 
       {/* 左侧侧边栏 */}
-      <aside className={`app-sidebar w-[280px] ${t.bgSecondary} border-r ${t.borderLight} flex flex-col shrink-0 transition-colors duration-300`}>
+      <aside className={`app-sidebar ${isSidebarOpen ? 'w-[320px] opacity-100' : 'w-0 opacity-0'} ${t.bgSecondary} border-r ${t.borderLight} flex flex-col shrink-0 transition-all duration-300 overflow-hidden z-20`}>
 
-        {/* Logo 区域 */}
-        <div className="p-4 pb-3">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center shadow-md shadow-blue-600/20">
-                <Activity className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h1 className={`text-lg font-bold tracking-tight ${t.text}`}>NR<span className="text-blue-500">mqtt</span></h1>
-                <p className={`text-[11px] ${t.textMuted}`}>MQTT Console</p>
-              </div>
-            </div>
-            {/* 主题切换按钮 */}
-            <button
-              onClick={toggleTheme}
-              className={`p-2 rounded-lg ${t.bgTertiary} ${t.bgHover} ${t.textSecondary} transition-colors`}
-              title={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
-            >
-              {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-            </button>
+        {/* Logo 区域（渐变图标 + NRmqtt + 主题切换） */}
+        <div className="h-16 px-6 flex items-center justify-between shrink-0 min-w-[320px]">
+          <div className="flex items-center gap-3">
+            <svg viewBox="0 0 1024 1024" className="w-8 h-8 text-blue-500" aria-hidden="true">
+              <path d="M 120 640 L 424 640 L 492 200 L 560 860 L 628 640 L 904 640" fill="none" stroke="currentColor" strokeWidth="80" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className={`font-bold text-base tracking-tight ${theme === 'light' ? 'text-gray-800' : 'text-gray-100'}`}>NRmqtt</span>
           </div>
+          {/* 主题切换开关 */}
+          <button
+            onClick={toggleTheme}
+            className={`relative w-11 h-6 rounded-full transition-colors duration-300 border ${
+              theme === 'dark' ? 'bg-blue-500/20 border-blue-500/40' : 'bg-gray-200 border-gray-300'
+            }`}
+            title={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm flex items-center justify-center transition-transform duration-300 ${
+                theme === 'dark' ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            >
+              {theme === 'dark' ? <SunDim size={13} className="text-slate-400" /> : <Moon size={13} className="text-slate-500" />}
+            </span>
+          </button>
+        </div>
 
-          {/* 连接状态单行胶囊 */}
-          <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors duration-300 ${
-            connectStatus === 'connected'
-              ? theme === 'light' ? 'bg-emerald-50/60 border-emerald-200' : 'bg-transparent border-transparent'
-              : connectStatus === 'connecting'
-                ? theme === 'light' ? 'bg-amber-50/60 border-amber-200' : 'bg-transparent border-transparent'
-                : `${t.bgTertiary} ${t.border}`
-          }`}>
-            <div className="relative flex h-2 w-2 shrink-0">
-              <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${connectStatus === 'connected' ? 'animate-ping bg-emerald-400' : connectStatus === 'connecting' ? 'animate-ping bg-amber-400' : ''}`}></span>
-              <span className={`relative inline-flex rounded-full h-2 w-2 ${connectStatus === 'connected' ? 'bg-emerald-500' : connectStatus === 'connecting' ? 'bg-amber-500' : 'bg-slate-400'}`}></span>
-            </div>
-            <span className={`text-xs font-semibold shrink-0 ${connectStatus === 'connected' ? (theme === 'light' ? 'text-emerald-700' : 'text-emerald-400') : connectStatus === 'connecting' ? (theme === 'light' ? 'text-amber-700' : 'text-amber-400') : t.textSecondary}`}>
-              {connectStatus === 'connected' ? '已连接' : connectStatus === 'connecting' ? '连接中...' : '未连接'}
+        <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-2 space-y-6">
+
+          {/* 连接状态行（悬浮面板：状态点 + 地址） */}
+          <div className={`flex items-center gap-2 px-3 py-2.5 ${t.floatingPanel}`}>
+            <span className="relative inline-flex h-2 w-2 shrink-0">
+              {connectStatus !== 'disconnected' && <span className={`absolute inline-flex h-full w-full rounded-full opacity-50 animate-ping ${connectStatus === 'connected' ? 'bg-[#06D6A0]' : 'bg-[#FFD166]'}`}></span>}
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${connectStatus === 'connected' ? 'bg-[#06D6A0]' : connectStatus === 'connecting' ? 'bg-[#FFD166]' : 'bg-[#EF476F]'}`}></span>
+            </span>
+            <span className="text-[12px] font-mono font-medium text-slate-700 dark:text-slate-300 truncate" title={`${connection.protocol}://${connection.host}`}>
+              {connectStatus === 'disconnected' ? '未连接' : `${connection.protocol}://${connection.host}`}
             </span>
             {connectStatus === 'connected' && (
-              <span className={`text-[11px] font-mono truncate flex-1 text-center min-w-0 ${theme === 'light' ? 'text-emerald-700/60' : 'text-gray-400'}`}>{connection.host}:{connection.port}</span>
-            )}
-            {connectStatus === 'connected' && (
-              <span className={`text-[10px] font-mono shrink-0 ${theme === 'light' ? 'text-emerald-600/80' : 'text-gray-500'}`}>{formatDuration(connectDuration)}</span>
+              <span className="ml-auto text-[11px] font-mono text-slate-500 dark:text-slate-400 shrink-0">{formatDuration(connectDuration)}</span>
             )}
             {reconnectCount > 0 && connectStatus !== 'connected' && (
-              <span className="text-[10px] text-amber-500 font-mono ml-auto shrink-0">重连×{reconnectCount}</span>
+              <span className="ml-auto text-[11px] font-mono text-[#FFD166] shrink-0">重连×{reconnectCount}</span>
             )}
           </div>
-        </div>
 
-        {/* 统计胶囊区 */}
-        <div className="px-4 pb-3">
-          <div className="flex items-center gap-1.5">
-            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-blue-600' : 'bg-white/5 text-blue-400'}`}>
-              <ArrowUpRight className="w-3 h-3 opacity-70" />{msgStats.sent}
-            </div>
-            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-emerald-600' : 'bg-white/5 text-emerald-400'}`}>
-              <ArrowDownRight className="w-3 h-3 opacity-70" />{msgStats.received}
-            </div>
-            <div className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-mono ${theme === 'light' ? 'bg-slate-50 text-rose-500' : 'bg-white/5 text-rose-400'}`}>
-              <AlertCircle className="w-3 h-3 opacity-70" />{msgStats.errors}
-            </div>
-          </div>
-        </div>
-
-        {/* 连接配置 */}
-        <div className="connection-config-scroll flex-1 overflow-y-auto custom-scrollbar px-4">
-
-          {/* 配置折叠面板 */}
+          {/* 连接配置 */}
+          <section className="space-y-2">
           <div className="mb-3">
             <button
               onClick={() => setConfigCollapsed(!configCollapsed)}
-              className={`w-full flex items-center justify-between px-3 py-2.5 ${t.card} ${t.cardHover} rounded-lg border transition-colors group`}
+              className="w-full flex items-center justify-between group py-2 mb-2"
             >
-              <div className="flex items-center gap-2">
-                <Server className="w-4 h-4 text-blue-500" />
-                <span className={`text-sm font-medium ${t.textSecondary}`}>连接配置</span>
+              <div className="flex items-center gap-2 font-bold text-[13px] text-[#333D4F] dark:text-[#E6EDF3]">
+                <span>连接配置</span>
               </div>
               <div className="flex items-center gap-2">
-                {connectStatus === 'connected' && <span className={`text-[10px] ${theme === 'light' ? 'bg-emerald-100 text-emerald-600' : 'bg-emerald-500/20 text-emerald-400'} px-2 py-0.5 rounded-full`}>在线</span>}
-                {configCollapsed ? <ChevronDown className={`w-4 h-4 ${t.textMuted}`}/> : <ChevronUp className={`w-4 h-4 ${t.textMuted}`}/>}
+                {connectStatus === 'connected' && <span className={`text-[11px] ${TONE.ok} px-2 py-0.5 rounded-full`}>在线</span>}
+                {configCollapsed ? <ChevronDown size={16} className="text-slate-600 group-hover:text-slate-800 dark:group-hover:text-slate-300 transition-colors"/> : <ChevronUp size={16} className="text-slate-600 group-hover:text-slate-800 dark:group-hover:text-slate-300 transition-colors"/>}
               </div>
             </button>
 
             {!configCollapsed && (
-              <div className={`mt-2 p-3 ${t.card} rounded-lg border space-y-3 animate-in fade-in slide-in-from-top-2 duration-200`}>
-                <div className="flex gap-2">
-                   <select className={`flex-1 text-xs rounded-lg px-3 py-2 focus:border-blue-500 ${themedSelectClass}`} onChange={handleLoadConfig} value={connection.name || ""}>
-                     <option value="" disabled>加载预设配置...</option>
-                     {savedConfigs.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                    </select>
-                    <button onClick={handleSaveConfig} title="保存配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-blue-500 transition-colors`}><Save className="w-4 h-4"/></button>
-                    {connection.name && <button onClick={handleDeleteConfig} title="删除配置" className={`p-2 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-lg ${t.textMuted} hover:text-rose-500 transition-colors`}><Trash2 className="w-4 h-4"/></button>}
+              <div className="space-y-4 pt-1 animate-in fade-in slide-in-from-top-2 duration-200">
+                 <div>
+                   <label className={labelStyle}>Host & Protocol</label>
+                   <div className={`flex items-center ${t.bgInput} border ${t.border} rounded-xl focus-within:ring-2 focus-within:ring-blue-500/30 focus-within:border-blue-500 transition-all overflow-hidden`}>
+                     <select
+                       value={connection.protocol}
+                       onChange={(e) => handleProtocolChange(e.target.value)}
+                       disabled={connectStatus === 'connected'}
+                       className="bg-transparent text-[13px] text-slate-700 dark:text-slate-300 outline-none pl-3 pr-1 py-2.5 font-bold cursor-pointer border-r border-gray-300/50 dark:border-white/10 shrink-0"
+                     >
+                       <option value="mqtt" disabled={!isDesktopShell}>mqtt://</option>
+                       <option value="mqtts" disabled={!isDesktopShell}>mqtts://</option>
+                       <option value="ws">ws://</option>
+                       <option value="wss">wss://</option>
+                     </select>
+                     <input
+                       type="text"
+                       value={connection.host}
+                       onChange={(e) => setConnection({...connection, host: e.target.value})}
+                       disabled={connectStatus === 'connected'}
+                       className="flex-1 min-w-0 w-full bg-transparent text-[13px] px-3 py-2.5 outline-none text-gray-800 dark:text-gray-200 placeholder:text-gray-400 font-medium"
+                       placeholder="broker.emqx.io"
+                     />
+                   </div>
                  </div>
 
-                 <input type="text" value={connection.host} onChange={(e) => setConnection({...connection, host: e.target.value})} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Host (e.g. broker.emqx.io)"/>
+                 <div className="grid grid-cols-2 gap-3">
+                   <div>
+                     <label className={labelStyle}>Port</label>
+                     <input type="number" value={connection.port} onChange={(e) => handlePortChange(e.target.value)} disabled={connectStatus === 'connected'} className={configInputStyle} placeholder="1883"/>
+                   </div>
+                   <div>
+                     <label className={labelStyle}>Client ID</label>
+                     <input type="text" value={connection.clientId} onChange={(e) => setConnection({...connection, clientId: e.target.value})} className={configInputStyle} />
+                   </div>
+                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <input type="number" value={connection.port} onChange={(e) => handlePortChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all disabled:opacity-50 ${t.text}`} placeholder="Port"/>
-                  <select value={connection.protocol} onChange={(e) => handleProtocolChange(e.target.value)} disabled={connectStatus === 'connected'} className={`w-full rounded-lg px-3 py-2 text-sm focus:border-blue-500 disabled:opacity-50 ${themedSelectClass}`}>
-                    <option value="ws">ws://</option>
-                    <option value="wss">wss://</option>
-                    <option value="mqtt" disabled={!isDesktopShell}>mqtt://{isDesktopShell ? '' : '（桌面端）'}</option>
-                    <option value="mqtts" disabled={!isDesktopShell}>mqtts://{isDesktopShell ? '' : '（桌面端）'}</option>
-                  </select>
-                </div>
-
-                {connection.protocol === 'wss' && (
-                  <div className={`text-xs ${theme === 'light' ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-amber-400/80 bg-amber-500/10 border-amber-500/20'} px-3 py-2 rounded-lg border`}>
+                {protocolTouched.current && connection.protocol === 'wss' && (
+                  <div className={`text-xs ${TONE.warn} ${TONE_BORDER.warn} px-3 py-2 rounded-lg border`}>
                     提示: 如果服务器没有 SSL 证书，请使用 ws://
                   </div>
                 )}
 
                 {(connection.protocol === 'ws' || connection.protocol === 'wss') && (
-                  <input
-                    type="text"
-                    value={connection.path}
-                    onChange={(e) => setConnection({...connection, path: e.target.value})}
-                    disabled={connectStatus === 'connected'}
-                    className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all disabled:opacity-50 ${t.text}`}
-                    placeholder="Path（仅 ws/wss 使用，例如 /mqtt）"
-                  />
+                  <div>
+                    <label className={labelStyle}>Path</label>
+                    <input
+                      type="text"
+                      value={connection.path}
+                      onChange={(e) => setConnection({...connection, path: e.target.value})}
+                      disabled={connectStatus === 'connected'}
+                      className={configInputStyle}
+                      placeholder="/mqtt"
+                    />
+                  </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-2">
-                  <input type="text" value={connection.username} onChange={(e) => setConnection({...connection, username: e.target.value})} disabled={connectStatus === 'connected'} placeholder="用户名" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
-                  <input type="password" value={connection.password} onChange={(e) => setConnection({...connection, password: e.target.value})} disabled={connectStatus === 'connected'} placeholder="密码" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all disabled:opacity-50 ${t.text}`}/>
-                </div>
-
-                <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-400 font-medium">
-                  {showAdvanced ? <ChevronUp className="w-3 h-3"/> : <ChevronDown className="w-3 h-3"/>} 高级设置
+                <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-blue-500 transition-colors">
+                  {showAdvanced ? <ChevronUp size={12}/> : <ChevronDown size={12}/>} 高级设置 (Auth)
                 </button>
 
                 {showAdvanced && (
-                  <div className={`p-3 ${t.bgTertiary} rounded-lg border ${t.borderLight} space-y-2`}>
+                  <div className="space-y-3">
+                    <div>
+                      <label className={labelStyle}>Auth</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input type="text" value={connection.username} onChange={(e) => setConnection({...connection, username: e.target.value})} disabled={connectStatus === 'connected'} placeholder="用户名" className={configInputStyle}/>
+                        <input type="password" value={connection.password} onChange={(e) => setConnection({...connection, password: e.target.value})} disabled={connectStatus === 'connected'} placeholder="密码" className={configInputStyle}/>
+                      </div>
+                    </div>
+                    <div className={`p-3 ${t.bgTertiary} rounded-lg border ${t.borderLight} space-y-2`}>
                     <div className="flex gap-2">
                       <div className="flex-1">
-                        <label className={`text-[10px] ${t.textMuted} block mb-1`}>Keep Alive (秒)</label>
+                        <label className={`text-[11px] ${t.textMuted} block mb-1`}>Keep Alive (秒)</label>
                         <input type="number" value={advancedConfig.keepalive} onChange={(e) => setAdvancedConfig({...advancedConfig, keepalive: e.target.value})} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-2 py-1 text-xs ${t.text}`}/>
                       </div>
                       <div className="flex-1">
-                        <label className={`text-[10px] ${t.textMuted} block mb-1`}>协议版本</label>
+                        <label className={`text-[11px] ${t.textMuted} block mb-1`}>协议版本</label>
                         <select value={advancedConfig.protocolVersion} onChange={(e) => setAdvancedConfig({...advancedConfig, protocolVersion: Number(e.target.value)})} className={`w-full rounded-lg px-2 py-1 text-xs ${themedSelectClass}`}>
                           <option value={3}>MQTT 3.1</option>
                           <option value={4}>MQTT 3.1.1</option>
@@ -2632,6 +2428,7 @@ export default function MqttDebugger() {
                       </label>
                     </div>
                   </div>
+                  </div>
                 )}
 
                 <button
@@ -2641,8 +2438,8 @@ export default function MqttDebugger() {
                     connectStatus !== 'connected'
                       ? reconnectCount > 0
                         ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-500/20'
-                        : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/20'
-                      : 'bg-rose-600 hover:bg-rose-500 shadow-rose-500/20'
+                        : 'bg-blue-500 hover:bg-blue-600 shadow-blue-500/20'
+                      : 'bg-rose-500 hover:bg-rose-600 shadow-rose-500/20'
                   } disabled:opacity-50`}
                 >
                   {connectStatus !== 'connected' ? (
@@ -2659,6 +2456,16 @@ export default function MqttDebugger() {
                     <><Square className="w-4 h-4 fill-current"/> 断开连接</>
                   )}
                 </button>
+
+                {/* 预设配置（本地保存/加载） */}
+                <div className="flex gap-2">
+                   <select className={`flex-1 text-xs rounded-xl px-3 py-2.5 focus:border-blue-500 ${themedSelectClass}`} onChange={handleLoadConfig} value={connection.name || ""}>
+                     <option value="" disabled>加载预设配置...</option>
+                     {savedConfigs.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                    </select>
+                    <button onClick={handleSaveConfig} title="保存配置" className={`p-2.5 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-xl ${t.textMuted} hover:text-blue-500 transition-colors`}><Save className="w-4 h-4"/></button>
+                    {connection.name && <button onClick={handleDeleteConfig} title="删除配置" className={`p-2.5 ${t.bgTertiary} ${t.bgHover} border ${t.border} rounded-xl ${t.textMuted} hover:text-rose-500 transition-colors`}><Trash2 className="w-4 h-4"/></button>}
+                 </div>
               </div>
             )}
           </div>
@@ -2668,31 +2475,29 @@ export default function MqttDebugger() {
             <button
               type="button"
               onClick={() => setSubscriptionsCollapsed((v) => !v)}
-              className={`w-full px-4 py-3 flex items-center gap-2 ${t.bgHover} rounded-xl transition-colors`}
+              className="w-full flex items-center justify-between group py-2 mb-2"
               title={subscriptionsCollapsed ? '展开订阅' : '收起订阅'}
             >
-              <Download className="w-4 h-4 text-emerald-500" />
-              <span className={`text-sm font-medium ${t.textSecondary}`}>订阅监控</span>
-              <span className={`text-xs ${t.textMuted} ml-auto`}>{subscriptions.length} 个</span>
-              {subscriptionsCollapsed ? (
-                <ChevronDown className={`w-4 h-4 ${t.textMuted}`} />
-              ) : (
-                <ChevronUp className={`w-4 h-4 ${t.textMuted}`} />
-              )}
+              <div className="flex items-center gap-2 font-bold text-[13px] text-[#333D4F] dark:text-[#E6EDF3]">
+                <span>订阅监控</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {subscriptionsCollapsed ? (
+                  <ChevronDown size={16} className="text-slate-600 group-hover:text-slate-800 dark:group-hover:text-slate-300 transition-colors" />
+                ) : (
+                  <ChevronUp size={16} className="text-slate-600 group-hover:text-slate-800 dark:group-hover:text-slate-300 transition-colors" />
+                )}
+              </div>
             </button>
 
             {!subscriptionsCollapsed && (
               <div className="space-y-2 mt-2">
-                <div className="flex gap-2 px-2">
-                  <input type="text" placeholder="Topic (e.g. #)" value={subTopic} onChange={(e) => setSubTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSubscribe()} className={`flex-1 ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-sm focus:border-blue-500 outline-none transition-all ${t.text}`}/>
-                  <button onClick={handleSubscribe} disabled={!client?.connected} className={`${theme === 'light' ? 'bg-emerald-100 hover:bg-emerald-600 text-emerald-600 hover:text-white' : 'bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white'} px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 transition-all`}>订阅</button>
-                </div>
                 <div className="space-y-1 px-2">
                   {subMonitorSelectedTopics.length > 0 && (
                     <button
                       type="button"
                       onClick={() => setSubMonitorSelectedTopics([])}
-                      className={`text-[10px] ${t.textMuted} hover:text-emerald-500 transition-colors mb-1 px-1`}
+                      className={`text-[11px] ${t.textMuted} hover:text-blue-500 transition-colors mb-1 px-1`}
                     >
                       清除筛选（已选 {subMonitorSelectedTopics.length}）
                     </button>
@@ -2700,212 +2505,218 @@ export default function MqttDebugger() {
                   {subscriptions.map(sub => {
                     const isSelected = subMonitorSelectedTopics.includes(sub);
                     return (
-                    <div key={sub} className={`flex items-center justify-between px-3 py-2 rounded-lg border group transition-all ${
-                      isSelected
-                        ? (theme === 'light' ? 'bg-emerald-50 border-emerald-300' : 'bg-emerald-500/10 border-emerald-500/30')
-                        : `${t.card} hover:border-emerald-500/20`
-                    }`}>
-                      <button
-                        type="button"
-                        onClick={() => toggleSubMonitorTopicSelection(sub)}
-                        className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
-                        title={isSelected ? `已选中：${sub}（再点取消）` : `点击筛选：${sub}`}
-                      >
-                        <span
-                          className={`w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 transition-all ${
-                            isSelected
-                              ? 'bg-emerald-500 shadow-sm shadow-emerald-500/30'
-                              : (theme === 'light' ? 'border-2 border-slate-300' : 'border-2 border-slate-600')
-                          }`}
-                        >
-                          {isSelected && (
-                            <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
-                          )}
-                        </span>
-                        <span className={`text-xs font-mono truncate ${isSelected ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-emerald-500'}`} title={sub}>{sub}</span>
-                      </button>
+                    <div
+                      key={sub}
+                      onClick={() => toggleSubMonitorTopicSelection(sub)}
+                      className={`flex items-center justify-between px-3 py-2.5 rounded-xl border group transition-all cursor-pointer ${
+                        isSelected
+                          ? (theme === 'light' ? 'bg-blue-50/80 border-blue-300' : 'bg-blue-500/10 border-blue-500/30')
+                          : 'bg-white/50 dark:bg-[#1C2128]/50 border-[#E1E4E8]/50 dark:border-[#30363D]/50 hover:bg-white dark:hover:bg-[#1C2128]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 truncate">
+                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${isSelected ? 'bg-blue-500 shadow-[0_0_8px_rgba(91,141,239,0.5)]' : 'bg-blue-500/40'}`}></span>
+                        <span className={`text-[12px] font-mono truncate ${isSelected ? 'text-blue-500 dark:text-blue-300 font-semibold' : 'text-[#333D4F] dark:text-[#E6EDF3]'}`} title={sub}>{sub}</span>
+                      </div>
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleUnsubscribe(sub); }}
-                        className={`${t.textMuted} hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all`}
+                        className={`${t.textMuted} hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity`}
                         title="取消订阅"
                       >
-                        <Trash2 className="w-3 h-3"/>
+                        <Trash2 size={14} />
                       </button>
                     </div>
                     );
                   })}
-                  {subscriptions.length === 0 && <div className={`text-xs ${t.textMuted} text-center py-4 border border-dashed ${t.border} rounded-lg`}>暂无订阅</div>}
+                  {subscriptions.length === 0 && <div className={`text-xs ${t.textMuted} text-center py-4 border border-dashed ${t.border} rounded-xl`}>暂无订阅</div>}
                 </div>
+                {newTopicOpen && (
+                  <div className="flex gap-2 px-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <input ref={subTopicInputRef} type="text" placeholder="Topic (e.g. #)" value={subTopic} onChange={(e) => setSubTopic(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { handleSubscribe(); setNewTopicOpen(false); } }} className={`flex-1 ${t.bgInput} border ${t.border} rounded-xl px-3 py-2 text-[13px] focus:border-blue-500 outline-none transition-all ${t.text}`}/>
+                    <button onClick={() => { handleSubscribe(); setNewTopicOpen(false); }} disabled={!client?.connected} className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-xl text-[13px] font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm shadow-blue-500/20">订阅</button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { setNewTopicOpen(true); setTimeout(() => subTopicInputRef.current?.focus(), 0); }}
+                  className="w-full mt-1 py-2.5 border-2 border-dashed border-blue-500/30 dark:border-blue-300/30 rounded-xl text-[12px] font-bold text-blue-500 dark:text-blue-300 hover:bg-blue-500/10 dark:hover:bg-blue-300/10 transition-colors flex items-center justify-center gap-2"
+                >
+                  <Plus size={15} strokeWidth={2.5}/> New Topic
+                </button>
               </div>
             )}
           </div>
+        </section>
         </div>
 
         {/* 底部工具入口 */}
         <div className={`p-4 border-t ${t.borderLight}`}>
           <button
-            onClick={() => setShowSyncModal(true)}
-            className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
-              isCloudConnected
-                ? `${theme === 'light' ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100' : 'bg-blue-500/20 text-blue-300 border-blue-500/30 hover:bg-blue-500/30'}`
-                : `${t.bgTertiary} ${t.textSecondary} border ${t.border} ${t.bgHover}`
-            }`}
+            onClick={() => setShowBackupModal(true)}
+            className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-[12px] font-medium rounded-xl transition-all duration-300 text-slate-500 dark:text-slate-400 ${t.bgHover}`}
           >
-            <Settings className="w-4 h-4" />
-            <span>同步与备份</span>
-            {isCloudConnected && <span className={`text-[10px] px-2 py-0.5 rounded-full border ${theme === 'light' ? 'border-blue-200 text-blue-600' : 'border-blue-500/30 text-blue-300'}`}>已连接</span>}
+            <FileText className="w-4 h-4" />
+            <span>备份</span>
           </button>
         </div>
       </aside>
 
       {/* 右侧主内容区 */}
-      <main className={`flex-1 flex flex-col min-w-0 ${t.bg} transition-colors duration-300`}>
+      <main className={`flex-1 flex flex-col min-w-0 relative ${t.bg} transition-colors duration-300`}>
 
         {/* 顶部 Header */}
-        <header className={`app-header sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F8FAFC]/90' : 'bg-[#050505]/90'} border-b ${t.border} px-5 py-3 flex items-center justify-between shrink-0`}>
-          <div className="flex items-center gap-3">
-            <h2 className={`text-sm font-semibold ${t.text} flex items-center gap-2`}>
-              <MessageSquare className="w-4 h-4 text-blue-500"/> 消息日志
-            </h2>
-            <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full ${theme === 'light' ? 'text-blue-600 bg-blue-50' : 'text-blue-300 bg-blue-500/10'}`}>{filteredMessageLogs.length}</span>
+        <header className={`app-header sticky top-0 z-20 ${theme === 'light' ? 'bg-[#F9FAFB]/80' : 'bg-[#09090B]/80'} backdrop-blur-xl border-b ${t.border} h-16 px-5 flex items-center justify-between shrink-0`}>
+          <div className="flex items-center gap-4 h-full">
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className={`p-2 rounded-xl ${t.textSecondary} ${t.bgHover} transition-all duration-300 ${!isSidebarOpen && 'rotate-180'}`}
+              title="切换侧栏"
+            >
+              <Layout size={18} />
+            </button>
+            <h2 className={`font-bold text-base ${theme === 'light' ? 'text-[#333D4F]' : 'text-white'} tracking-wide`}>消息日志</h2>
+            <div className="flex items-center bg-gray-100 dark:bg-zinc-800/50 rounded-lg p-0.5 ml-1">
+              {([['all', '全部'], ['in', '接收'], ['out', '发送']]).map(([type, label]) => (
+                <button
+                  key={type}
+                  onClick={() => setLogTypeFilter(type)}
+                  className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all duration-300 ${
+                    logTypeFilter === type
+                      ? 'bg-white dark:bg-zinc-700 text-blue-500 dark:text-blue-300 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full ${TONE.info}`}>{filteredMessageLogs.length}</span>
           </div>
           <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 mr-1">
+              <button onClick={() => setLogViewMode(m => m==='text'?'hex':'text')} className={`text-[11px] px-2.5 py-1 rounded-lg ${t.textSecondary} ${t.bgHover} transition-colors flex items-center gap-1`}>
+                <Binary className="w-3 h-3"/>{logViewMode.toUpperCase()}
+              </button>
+              <button onClick={() => setIsAutoScroll(!isAutoScroll)} className={`text-[11px] px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 ${isAutoScroll ? TONE.ok : TONE.warn}`}>
+                {isAutoScroll ? '自动滚动' : '已暂停'}
+              </button>
+            </div>
             <div className="relative group">
-              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${t.textMuted} group-focus-within:text-blue-500 transition-colors`} size={15} />
+              <Search className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${t.textMuted} group-focus-within:text-blue-500 transition-colors`} size={15} />
               <input
                 type="text"
                 value={logFilter}
                 onChange={e => setLogFilter(e.target.value)}
                 placeholder="搜索日志..."
                 ref={logFilterInputRef}
-                className={`pl-9 pr-4 py-1.5 ${t.bgInput} border ${t.border} rounded-md text-xs w-52 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${t.text} placeholder:${t.textMuted}`}
+                className={`pl-10 pr-4 py-2 ${t.bgInput} ${t.border} border rounded-full text-[13px] w-48 lg:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${t.text} placeholder:${t.textMuted}`}
               />
             </div>
-            <button
-              onClick={resetStats}
-              className={`p-2 ${t.bgTertiary} border ${t.border} rounded-md ${t.textSecondary} hover:${t.text} ${t.bgHover} transition-colors`}
-              title="重置统计"
-            >
-              <RotateCcw size={18} />
-            </button>
             {isDevMode && (
               <button
                 onClick={() => setEventCenterOpen(true)}
                 title="事件中心（开发模式）"
-                className={`relative p-2 ${t.bgTertiary} border ${t.border} rounded-xl ${t.textSecondary} hover:${t.text} ${t.bgHover} transition-all`}
+                className={`relative p-2 rounded-xl ${t.textSecondary} ${t.bgHover} transition-all duration-300`}
               >
-                <Bell size={18} />
-                {msgStats.errors > 0 && <span className={`absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full border-2 ${theme === 'light' ? 'border-[#F8FAFC]' : 'border-[#050505]'}`}></span>}
+                <Bell size={16} />
               </button>
             )}
+            <button
+              onClick={() => setLogs([])}
+              className={`p-2 rounded-xl ${t.textSecondary} ${t.bgHover} transition-all duration-300`}
+              title="清空日志"
+            >
+              <Trash2 size={16} />
+            </button>
           </div>
         </header>
 
         {/* 日志区域 */}
         <div className="flex-1 flex flex-col min-h-0 relative">
-          <div className={`app-log-toolbar px-5 py-1.5 ${t.bgTertiary} border-b ${t.border} flex items-center justify-end shrink-0`}>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setLogViewMode(m => m==='text'?'hex':'text')} className={`text-[11px] px-2.5 py-1 rounded-md ${t.textSecondary} ${t.bgHover} transition-colors flex items-center gap-1`}>
-                <Binary className="w-3 h-3"/>{logViewMode.toUpperCase()}
-              </button>
-              <button onClick={() => setIsAutoScroll(!isAutoScroll)} className={`text-[11px] px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 ${isAutoScroll ? (theme === 'light' ? 'text-emerald-600 bg-emerald-50' : 'text-emerald-400 bg-emerald-500/10') : (theme === 'light' ? 'text-amber-600 bg-amber-50' : 'text-amber-400 bg-amber-500/10')}`}>
-                {isAutoScroll ? 'Auto' : 'Paused'}
-              </button>
-              <button onClick={() => setLogs([])} className={`text-[11px] px-2.5 py-1 rounded-md ${t.textSecondary} ${t.bgHover} transition-colors`}>
-                <Trash2 className="w-3 h-3"/>
-              </button>
-            </div>
-          </div>
 
           {/* 日志列表 */}
-          <div className="app-log-list flex-1 overflow-y-auto px-5 py-4 space-y-3 custom-scrollbar">
+          <div className="app-log-list flex-1 overflow-y-auto py-4 custom-scrollbar">
+            <div className="px-8 space-y-3 min-h-full flex flex-col">
             {filteredMessageLogs.length === 0 ? (
-              <div className={`flex flex-col items-center justify-center h-full ${t.textMuted}`}>
+              <div className={`flex flex-col items-center justify-center flex-1 ${t.textMuted}`}>
                 <MessageSquare className="w-12 h-12 mb-3 opacity-30" />
                 <p className="text-sm">暂无日志记录</p>
                 <p className="text-xs mt-1">连接服务器并订阅主题后，消息将显示在这里</p>
               </div>
             ) : (
               filteredMessageLogs.map(log => (
-                <LogItem key={log.id} log={log} theme={theme} logViewMode={logViewMode} onEdit={handleEditFromLog} onCopy={handleCopyPayload} />
+                <LogItem key={log.id} log={log} theme={theme} logViewMode={logViewMode} onEdit={handleEditFromLog} />
               ))
             )}
             <div ref={logsEndRef} />
+            </div>
           </div>
         </div>
 
-        {/* 发布区域 */}
-        <div className={`app-publish-bar shrink-0 border-t ${t.border} ${theme === 'light' ? 'bg-white' : 'bg-[#121212]'} z-10 transition-colors duration-300`}>
-          <div className="p-3 space-y-2.5">
+        {/* 发布台 */}
+        <div className="shrink-0 mx-4 mb-4 z-20">
+          <div className={`p-4 ${t.floatingPanel} flex flex-col gap-3 transition-transform duration-300`}>
 
-            {/* 第一行：Topic 和选项 */}
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                type="text"
-                value={pubTopic}
-                onChange={(e) => setPubTopic(e.target.value)}
-                className={`flex-1 min-w-[180px] ${t.bgInput} border ${t.border} rounded-md px-3 py-2 text-sm font-mono focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all ${t.text}`}
-                placeholder="Topic (e.g. test/topic)"
-              />
-
-              <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-md px-3 py-2`}>
-                <select value={pubQoS} onChange={(e) => setPubQoS(Number(e.target.value))} className={`bg-transparent text-xs outline-none ${t.textSecondary}`}>
-                  <option value={0}>QoS 0</option>
-                  <option value={1}>QoS 1</option>
-                  <option value={2}>QoS 2</option>
-                </select>
-                <div className={`w-px h-4 ${theme === 'light' ? 'bg-slate-200' : 'bg-gray-800'}`}></div>
-                <label className={`flex items-center gap-1.5 text-xs ${t.textSecondary} cursor-pointer`}>
-                  <input type="checkbox" checked={pubRetain} onChange={e => setPubRetain(e.target.checked)} className="rounded bg-slate-200 dark:bg-[#0A0A0A] border-slate-300 dark:border-gray-700 text-blue-600 w-3.5 h-3.5"/>
-                  Retain
+            {/* 控制行：Topic + QoS + Retain + 定时 */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1 relative">
+                <Hash className={`absolute left-3 top-1/2 -translate-y-1/2 ${t.textMuted}`} size={14} />
+                <input
+                  type="text"
+                  value={pubTopic}
+                  onChange={(e) => setPubTopic(e.target.value)}
+                  placeholder="Topic (e.g. device/control)"
+                  className={`w-full pl-9 pr-4 py-2 text-[13px] font-mono ${t.bgInput} border border-transparent rounded-xl outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all ${t.text}`}
+                />
+              </div>
+              <div className={`flex items-center gap-4 px-4 py-2 rounded-xl ${t.bgInput} border border-transparent`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-slate-500 dark:text-slate-400">QoS</span>
+                  <select value={pubQoS} onChange={(e) => setPubQoS(Number(e.target.value))} className="bg-transparent text-[13px] font-mono outline-none text-[#333D4F] dark:text-[#E6EDF3] cursor-pointer">
+                    <option value={0}>0</option>
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                  </select>
+                </div>
+                <div className="w-px h-4 bg-[#D1D5DB] dark:bg-[#4B5563]"></div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <div className="relative">
+                    <input type="checkbox" className="sr-only" checked={pubRetain} onChange={e => setPubRetain(e.target.checked)} />
+                    <div className={`block w-8 h-5 rounded-full transition-colors duration-300 ${pubRetain ? 'bg-blue-500 dark:bg-blue-400' : 'bg-gray-300 dark:bg-zinc-700'}`}></div>
+                    <div className={`absolute left-0.5 top-0.5 bg-white w-3.5 h-3.5 rounded-full transition-transform duration-300 shadow-sm ${pubRetain ? 'translate-x-3.5' : ''}`}></div>
+                  </div>
+                  <span className="text-[12px] font-bold text-gray-500 group-hover:text-gray-800 dark:group-hover:text-gray-200 transition-colors">Retain</span>
                 </label>
               </div>
 
               {/* 定时发送 */}
-              <div className={`flex items-center gap-2 ${t.bgInput} border ${t.border} rounded-md px-3 py-2`}>
+              <div className={`flex items-center gap-2 ${t.bgInput} border border-transparent rounded-xl px-3 py-2`}>
                 <Timer className={`w-4 h-4 ${t.textMuted}`}/>
                 <input
                   type="number"
                   value={timerInterval}
                   onChange={(e) => setTimerInterval(Math.max(100, Number(e.target.value)))}
                   disabled={timerEnabled}
-                  className={`w-16 bg-transparent text-xs outline-none text-center ${t.textSecondary}`}
+                  className={`w-14 bg-transparent text-xs outline-none text-center ${t.textSecondary}`}
                   placeholder="间隔"
                 />
                 <span className={`text-xs ${t.textMuted}`}>ms</span>
                 <button
                   onClick={toggleTimer}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                     timerEnabled
-                      ? (theme === 'light' ? 'bg-rose-100 text-rose-600 hover:bg-rose-200' : 'bg-rose-500/20 text-rose-400 hover:bg-rose-500/30')
-                      : (theme === 'light' ? 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30')
+                      ? `${TONE.err} hover:bg-rose-100 dark:hover:bg-rose-500/20`
+                      : `${TONE.ok} hover:bg-emerald-100 dark:hover:bg-emerald-500/20`
                   }`}
                 >
                   {timerEnabled ? '停止' : '定时'}
                 </button>
               </div>
-
-              <button
-                onClick={() => setShowQuickActionsPanel(true)}
-                className={`flex items-center gap-1.5 text-xs font-bold ${
-                  theme === 'light'
-                    ? 'text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100'
-                    : 'text-amber-300 border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20'
-                } border px-3 py-2 rounded-md transition-colors`}
-                title="打开快捷指令面板"
-              >
-                <Zap className="w-3.5 h-3.5"/> 快捷指令
-                <span className={`ml-1 text-[10px] font-semibold ${theme === 'light' ? 'text-amber-600' : 'text-amber-300/80'}`}>{quickActions.length}</span>
-              </button>
-
-              <button onClick={handleSaveAction} className={`flex items-center gap-1.5 text-xs font-medium ${theme === 'light' ? 'text-blue-600 border-blue-200 bg-blue-50 hover:bg-blue-100' : 'text-blue-400 border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20'} border px-3 py-2 rounded-md transition-colors`}>
-                <Plus className="w-3.5 h-3.5"/> 存为指令
-              </button>
             </div>
 
             {timerEnabled && (
-              <div className={`rounded-md border px-3 py-2 ${theme === 'light' ? 'bg-emerald-50/80 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
+              <div className={`rounded-lg border px-3 py-2 ${theme === 'light' ? 'bg-emerald-50/80 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
                 <div className="flex items-center justify-between gap-3 mb-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <Timer className={`${theme === 'light' ? 'text-emerald-600' : 'text-emerald-300'} w-4 h-4 shrink-0`} />
@@ -2930,68 +2741,50 @@ export default function MqttDebugger() {
               </div>
             )}
 
-            <div className={`flex items-center gap-2 ${t.bgTertiary} border ${t.border} rounded-md px-3 py-1.5 overflow-x-auto custom-scrollbar`}>
-              <div className={`text-xs font-semibold ${t.textMuted} shrink-0 flex items-center gap-1`}>
-                <Star className="w-3.5 h-3.5" />
-                常用
+            {/* 快捷指令行 */}
+            <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar pb-0.5">
+              <div className={`flex items-center gap-1.5 pr-2 text-slate-500 dark:text-slate-400 border-r ${theme === 'light' ? 'border-slate-200' : 'border-slate-700/50'} shrink-0`}>
+                <Star size={13} className="text-[#F59E0B] dark:text-[#FBBF24]" />
+                <span className="text-[12px] font-bold">快捷指令</span>
               </div>
-              <div className="flex items-center gap-2 min-w-0">
-                {commonActions.map((action) => (
-                  <button
-                    key={actionIdKey(action?.id) || action.name}
-                    type="button"
-                    onClick={() => sendQuickAction(action, { closePanel: false })}
-                    className={`shrink-0 px-3 py-1 rounded-md text-xs font-bold border transition-colors ${
-                      theme === 'light'
-                        ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                        : 'bg-amber-500/10 text-amber-200 border-amber-500/20 hover:bg-amber-500/20'
-                    }`}
-                    title={`${action.name}\n${action.topic}`}
-                  >
-                    {action.name}
-                  </button>
-                ))}
-                {Array.from({ length: Math.max(0, 3 - commonActions.length) }).map((_, idx) => (
-                  <button
-                    key={`common-empty-${idx}`}
-                    type="button"
-                    onClick={() => setShowQuickActionsPanel(true)}
-                    className={`shrink-0 px-3 py-1 rounded-md text-xs font-semibold border transition-colors ${t.bgSecondary} ${t.textSecondary} ${t.bgHover} ${t.border}`}
-                    title="添加常用（置顶或最近使用会出现在这里）"
-                  >
-                    添加
-                  </button>
-                ))}
-              </div>
+              {commonActions.map((action) => (
+                <button
+                  key={actionIdKey(action?.id) || action.name}
+                  type="button"
+                  onClick={(e) => (e.shiftKey
+                    ? fillQuickAction(action, { closePanel: false, clearQuery: false })
+                    : sendQuickAction(action, { closePanel: false }))}
+                  className="shrink-0 px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-800/80 text-slate-600 dark:text-slate-300 text-[11px] font-bold shadow-sm border border-slate-200/80 dark:border-slate-700/80 hover:border-blue-500/60 hover:text-blue-500 dark:hover:border-blue-300/60 dark:hover:text-blue-300 transition-all"
+                  title={`${action.name}\n${action.topic}\n点击发送 · Shift+点击仅填入`}
+                >
+                  {action.name}
+                </button>
+              ))}
+              <button onClick={handleSaveAction} className="shrink-0 px-2 py-1 rounded-lg text-blue-500 hover:bg-blue-500/10 dark:text-blue-300 dark:hover:bg-blue-300/10 text-[11px] font-bold transition-colors flex items-center gap-1 border border-dashed border-blue-500/40 dark:border-blue-300/40 ml-1">
+                <Plus size={12} strokeWidth={2.5}/> 存为指令
+              </button>
+              <button onClick={() => setShowQuickActionsPanel(true)} className="shrink-0 px-2 py-1 rounded-lg text-[11px] font-bold text-blue-500 hover:bg-blue-500/10 dark:text-blue-300 dark:hover:bg-blue-300/10 transition-colors flex items-center gap-1 ml-auto">
+                <Zap size={12} strokeWidth={2.5}/> 快捷面板
+                <span className={`text-[11px] font-semibold ${theme === 'light' ? 'text-blue-500' : 'text-blue-300'}`}>{quickActions.length}</span>
+              </button>
             </div>
 
-            {/* 消息输入和发送 */}
-            <div className="flex gap-2">
-              <div className="flex-1 min-w-0 relative">
+            {/* Payload + 发送（可垂直拉伸） */}
+            <div className="flex gap-3 items-end">
+              <div className={`flex-1 relative rounded-xl ${t.bgInput} border border-transparent focus-within:ring-2 focus-within:ring-blue-500/30 focus-within:bg-white dark:focus-within:bg-zinc-900 transition-all`}>
                 <textarea
                   ref={pubMessageTextareaRef}
                   value={pubMessage}
                   onChange={(e) => setPubMessage(e.target.value)}
-                  className={`payload-textarea custom-scrollbar w-full ${t.bgInput} border ${t.border} rounded-md px-3 pr-12 py-2.5 text-sm font-mono resize-y focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all h-20 min-h-[80px] max-h-[38vh] overflow-y-auto ${t.text}`}
-                  placeholder='Payload (e.g. {"msg": "Hello"})'
+                  className={`payload-textarea custom-scrollbar w-full bg-transparent p-3 font-mono text-[13px] leading-relaxed ${t.text} min-h-[90px] max-h-[38vh] overflow-y-auto outline-none rounded-xl`}
+                  placeholder='{"msg": "Hello"}'
+                  spellCheck="false"
                 />
-                <button
-                  type="button"
-                  onClick={openPublishEditor}
-                  className={`absolute top-2 right-2 p-2 rounded-lg ${t.bgTertiary} border ${t.border} ${t.textSecondary} ${t.bgHover} transition-colors`}
-                  title="编辑即将发送的消息"
-                >
-                  <Edit2 className="w-4 h-4" />
-                </button>
+                <button type="button" onClick={openPublishEditor} className={`absolute bottom-2 right-2 p-1.5 rounded-lg ${t.textSecondary} ${t.bgHover} transition-all`} title="编辑即将发送的消息"><Edit2 size={14}/></button>
               </div>
-              <button
-                onClick={handlePublish}
-                disabled={!client?.connected}
-                className="w-16 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-bold disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1 transition-colors"
-              >
-                <Send className="w-5 h-5"/>
-                <span className="text-xs">发送</span>
-                <span className="text-[10px] text-blue-100 opacity-80">Ctrl+Enter</span>
+              <button onClick={handlePublish} disabled={!client?.connected} className={`w-[110px] self-stretch min-h-[90px] bg-blue-500 hover:bg-blue-600 dark:bg-blue-400 dark:hover:bg-blue-300 text-white rounded-xl font-bold flex flex-col items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md shadow-blue-500/25 dark:shadow-blue-400/20`}>
+                <Send size={20}/>
+                <span className="text-[13px] font-bold tracking-widest uppercase">发送</span>
               </button>
             </div>
           </div>
@@ -3016,8 +2809,8 @@ export default function MqttDebugger() {
                   onClick={() => setDebugPacketLog(v => !v)}
                   className={`text-xs px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 ${
                     debugPacketLog
-                      ? (theme === 'light' ? 'text-violet-700 bg-violet-50' : 'text-violet-300 bg-violet-500/10')
-                      : (theme === 'light' ? 'text-slate-600 bg-slate-50' : 'text-slate-400 bg-slate-500/10')
+                      ? TONE.accent
+                      : TONE.neutral
                   }`}
                   title="packetsend/packetreceive（高频）"
                 >
@@ -3044,7 +2837,7 @@ export default function MqttDebugger() {
                     className={`pl-9 pr-4 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${t.text} placeholder:${t.textMuted}`}
                   />
                 </div>
-                <div className={`text-[10px] ${t.textMuted}`}>
+                <div className={`text-[11px] ${t.textMuted}`}>
                   主视图仅显示发送/接收消息；连接过程、诊断、重连等事件会显示在这里。
                 </div>
               </div>
@@ -3061,20 +2854,16 @@ export default function MqttDebugger() {
                     <div key={log.id} className={`p-3 rounded-xl border ${t.border} ${t.bgTertiary}`}>
                       <div className="flex items-center gap-2">
                         <div className={`text-xs ${t.textMuted} font-mono`}>{log.timestamp}</div>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold uppercase ${
-                          log.type === 'error' ? (theme === 'light' ? 'text-rose-600 border-rose-200 bg-rose-50' : 'text-rose-400 border-rose-500/30 bg-rose-500/10') :
-                          log.type === 'system' ? (theme === 'light' ? 'text-slate-600 border-slate-200 bg-slate-50' : 'text-slate-400 border-slate-500/30 bg-slate-500/10') :
-                          (theme === 'light' ? 'text-violet-700 border-violet-200 bg-violet-50' : 'text-violet-300 border-violet-500/30 bg-violet-500/10')
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full border font-bold uppercase ${
+                          log.type === 'error' ? `${TONE.err} ${TONE_BORDER.err}` :
+                          log.type === 'system' ? `${TONE.neutral} ${TONE_BORDER.neutral}` :
+                          `${TONE.accent} ${TONE_BORDER.accent}`
                         }`}>{log.type}</span>
                         {log.topic && <span className={`text-xs ${t.textSecondary} font-semibold font-mono truncate`}>{log.topic}</span>}
-                        <button
-                          type="button"
-                          onClick={() => navigator.clipboard.writeText([log.topic, log.payload, log.details].filter(Boolean).join('\n'))}
-                          className={`ml-auto ${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded transition-all`}
-                          title="复制"
-                        >
-                          <Copy className="w-3 h-3"/>
-                        </button>
+                        <CopyButton
+                          text={[log.topic, log.payload, log.details].filter(Boolean).join('\n')}
+                          className={`ml-auto ${t.textMuted} hover:${t.text} p-1 ${t.bgHover} rounded-lg transition-all`}
+                        />
                       </div>
                       <div className={`mt-2 text-xs whitespace-pre-wrap break-words font-mono ${t.text}`}>
                         {log.payload}
@@ -3126,7 +2915,7 @@ export default function MqttDebugger() {
         }
         .themed-select option,
         .themed-select optgroup {
-           background: ${theme === 'light' ? '#ffffff' : '#0A0A0A'};
+           background: ${theme === 'light' ? '#ffffff' : '#18181B'};
            color: ${theme === 'light' ? '#0f172a' : '#d1d5db'};
         }
         .themed-select:disabled {
