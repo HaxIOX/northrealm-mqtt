@@ -5,7 +5,7 @@
 //   $env:MQTT_PORT='1883'
 //   $env:MQTT_USERNAME=''
 //   $env:MQTT_PASSWORD=''
-//   node test-mqtt.cjs
+//   node scripts/test-mqtt.cjs
 
 const mqtt = require('mqtt');
 

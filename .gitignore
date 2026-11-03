@@ -30,7 +30,11 @@ tools/
 Northrealm-*-win/
 Northrealm-*-win.zip
 nr_run.log
-android/**/build/
-android/.gradle/
-android/local.properties
+.tmp/
+android/
+
+# Trellis 工作流与 AI 助手配置（仅本地使用）
+.trellis/
+AGENTS.md
+docs/trellis-plan.md
 .cursor/
