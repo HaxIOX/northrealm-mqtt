@@ -11,6 +11,8 @@ export function useMqttPublishWorkspace({ client, addLog, shouldDropDuplicateMan
   const [timerInterval, setTimerInterval] = useState(1000);
   const [timerIntervalInput, setTimerIntervalInput] = useState('1000');
   const timerRef = useRef(null);
+  // 下一次定时发送的时间戳，桌面端用它显示倒计时
+  const [timerNextSendAt, setTimerNextSendAt] = useState(null);
 
   const [publishEditorOpen, setPublishEditorOpen] = useState(false);
   const [publishEditorValue, setPublishEditorValue] = useState('');
@@ -119,6 +121,7 @@ export function useMqttPublishWorkspace({ client, addLog, shouldDropDuplicateMan
     }
 
     setTimerEnabled(false);
+    setTimerNextSendAt(null);
   };
 
   const toggleTimer = () => {
@@ -135,8 +138,10 @@ export function useMqttPublishWorkspace({ client, addLog, shouldDropDuplicateMan
 
     const intervalMs = syncTimerIntervalFromInput();
     setTimerEnabled(true);
+    setTimerNextSendAt(Date.now() + intervalMs);
     addLog('system', '', `定时发送已启动，间隔 ${intervalMs}ms${topics.length > 1 ? `（${topics.length} 个 Topic）` : ''}`);
     timerRef.current = setInterval(() => {
+      setTimerNextSendAt(Date.now() + intervalMs);
       topics.forEach((topic) => {
         client.publish(topic, pubMessage, { qos: pubQoS, retain: pubRetain }, (err) => {
           if (err) addLog('error', topic, err.message);
@@ -192,6 +197,7 @@ export function useMqttPublishWorkspace({ client, addLog, shouldDropDuplicateMan
     timerEnabled,
     timerInterval,
     timerIntervalInput,
+    timerNextSendAt,
     toggleTimer,
   };
 }

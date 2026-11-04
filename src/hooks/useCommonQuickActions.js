@@ -1,0 +1,52 @@
+import { useAppData } from '../contexts/AppDataContext.jsx';
+import { useModal } from '../contexts/ModalContext.jsx';
+import { useMqtt } from '../contexts/MqttContext.jsx';
+
+// 发布区的“存为指令”与“常用指令”（置顶优先，其次最近使用）。手机端 PublishBar 与桌面端 DesktopPublishBar 共用。
+export function useCommonQuickActions(maxCommonActions) {
+  const { openInputModal } = useModal();
+  const { pubTopic, pubMessage, pubQoS, pubRetain, addLog } = useMqtt();
+  const { quickActions, recentActionIds, updateData } = useAppData();
+
+  const handleSaveAction = () => {
+    openInputModal("给指令起个名字 (如: 开灯)", "新指令", (name) => {
+      if (!name) return;
+      const trimmedName = name.trim();
+      const isDuplicate = quickActions.some(a => a.name === trimmedName);
+      if (isDuplicate) { addLog('error', '', `指令名称"${trimmedName}"已存在，请使用其他名称`); return; }
+      const newAction = { id: Date.now(), name: trimmedName, topic: pubTopic, payload: pubMessage, qos: pubQoS, retain: pubRetain, pinned: false };
+      updateData('actions', [...quickActions, newAction]);
+    });
+  };
+
+  // Compute common actions
+  const pinnedActions = (() => {
+    const pinned = (quickActions || []).filter((a) => a && a.pinned);
+    if (pinned.length <= 1) return pinned;
+    const index = new Map((recentActionIds || []).map((id, i) => [id, i]));
+    return [...pinned].sort((a, b) => {
+      const ai = index.has(a.id) ? index.get(a.id) : Number.MAX_SAFE_INTEGER;
+      const bi = index.has(b.id) ? index.get(b.id) : Number.MAX_SAFE_INTEGER;
+      if (ai !== bi) return ai - bi;
+      return String(a?.name || '').localeCompare(String(b?.name || ''));
+    });
+  })();
+
+  const commonActions = (() => {
+    const all = Array.isArray(quickActions) ? quickActions : [];
+    const byId = new Map(all.map((a) => [a.id, a]));
+    const chosen = [];
+    for (const action of pinnedActions) { if (action && chosen.length < maxCommonActions) chosen.push(action); }
+    if (chosen.length < maxCommonActions) {
+      for (const id of (recentActionIds || [])) {
+        const action = byId.get(id);
+        if (!action || chosen.some((a) => a.id === action.id)) continue;
+        chosen.push(action);
+        if (chosen.length >= maxCommonActions) break;
+      }
+    }
+    return chosen.slice(0, maxCommonActions);
+  })();
+
+  return { handleSaveAction, commonActions };
+}
