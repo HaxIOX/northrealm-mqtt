@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { detectRuntime } from '../mqtt/runtime.js';
 
 const ThemeContext = createContext(null);
 
@@ -98,8 +99,10 @@ function isNativeApp() {
     && window.Capacitor.isNativePlatform() === true;
 }
 
+// Electron 桌面壳始终用桌面布局（默认窗口 985 宽，低于 1024 断点）；浏览器里宽屏才用。
 function getIsDesktop() {
-  return typeof window !== 'undefined' && !isNativeApp() && !!window.matchMedia?.(DESKTOP_QUERY).matches;
+  if (typeof window === 'undefined' || isNativeApp()) return false;
+  return detectRuntime().isDesktopShell || !!window.matchMedia?.(DESKTOP_QUERY).matches;
 }
 
 function getSystemTheme() {

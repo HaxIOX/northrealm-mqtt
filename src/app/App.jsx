@@ -9,6 +9,7 @@ import QuickActionsModal from '../components/QuickActionsModal.jsx';
 import MulticastModal from '../components/MulticastModal.jsx';
 import SyncModal from '../components/SyncModal.jsx';
 import Sidebar from '../components/Sidebar.jsx';
+import DesktopSidebar from '../components/desktop/DesktopSidebar.jsx';
 import MainContent from '../components/MainContent.jsx';
 import MobileActionMenu from '../components/mobile/MobileActionMenu.jsx';
 import MobileConnectionModal from '../components/mobile/MobileConnectionModal.jsx';
@@ -129,7 +130,7 @@ function AppShell() {
       <QuickActionsModal />
       <MulticastModal />
       <SyncModal />
-      <Sidebar mobileOpen={false} />
+      {isDesktop ? <DesktopSidebar /> : <Sidebar mobileOpen={false} />}
       <MainContent onOpenTopicFilters={openTopicFilter} />
       {!mobileConnectionOpen && !mobilePublishOpen && !topicFilterOpen && (
         <MobileActionMenu
