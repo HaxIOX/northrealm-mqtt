@@ -22,7 +22,7 @@ function AddLogBridge({ addLogRef }) {
 }
 
 function AppShell() {
-  const { theme, t } = useTheme();
+  const { theme, t, isDesktop } = useTheme();
   const { backupImportInputRef, handleImportBackupFileChange } = useAppData();
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [mobileConnectionOpen, setMobileConnectionOpen] = useState(false);
@@ -113,7 +113,7 @@ function AppShell() {
 
   return (
     <div
-      className={`min-h-0 overflow-hidden flex ${t.bg} ${theme === 'dark' ? 'dark' : ''}`}
+      className={`min-h-0 overflow-hidden flex ${t.bg} ${theme === 'dark' ? 'dark' : ''} ${isDesktop ? 'desktop-ui' : ''}`}
       style={{
         '--app-safe-bottom': isNativeMobile ? 'max(env(safe-area-inset-bottom), 24px)' : '0px',
         '--app-safe-top': isNativeMobile ? 'max(env(safe-area-inset-top), 24px)' : '0px',

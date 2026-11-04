@@ -45,6 +45,63 @@ const darkTheme = {
   accentLight: 'bg-neutral-900',
 };
 
+// 桌面端（宽屏且非原生 App）配色：蓝色强调色，沿用 v0.1.15 Windows 包的外观。手机端继续用上面的单色主题。
+const desktopLightTheme = {
+  ...lightTheme,
+  bg: 'bg-[#F9FAFB]',
+  bgSecondary: 'bg-white/60',
+  bgTertiary: 'bg-gray-100/50',
+  bgHover: 'hover:bg-gray-100',
+  bgInput: 'bg-gray-100/70',
+  border: 'border-gray-200/50',
+  borderLight: 'border-gray-200/40',
+  text: 'text-gray-800',
+  textSecondary: 'text-slate-600',
+  textMuted: 'text-slate-500',
+  shadowLg: 'shadow-lg shadow-gray-200/40',
+  card: 'bg-white/80 border-gray-200/50',
+  cardHover: 'hover:border-gray-300',
+  accent: 'brand',
+  accentBg: 'bg-brand-500',
+  accentText: 'text-brand-500',
+  accentLight: 'bg-brand-50',
+  floatingPanel: 'bg-white/90 shadow-lg shadow-gray-200/40 border border-gray-200/50 rounded-xl',
+};
+
+const desktopDarkTheme = {
+  ...darkTheme,
+  bg: 'bg-[#09090B]',
+  bgSecondary: 'bg-[#18181B]/60',
+  bgTertiary: 'bg-white/[0.03]',
+  bgHover: 'hover:bg-white/[0.05]',
+  bgInput: 'bg-zinc-900/50',
+  border: 'border-white/5',
+  borderLight: 'border-white/[0.05]',
+  text: 'text-gray-200',
+  textSecondary: 'text-slate-400',
+  textMuted: 'text-slate-500',
+  shadowLg: 'shadow-[0_8px_30px_rgba(0,0,0,0.4)]',
+  card: 'bg-[#18181B]/80 border-white/10',
+  cardHover: 'hover:border-white/[0.15]',
+  accent: 'brand',
+  accentBg: 'bg-brand-400',
+  accentText: 'text-brand-300',
+  accentLight: 'bg-brand-400/10',
+  floatingPanel: 'bg-[#18181B]/90 shadow-xl shadow-black/40 border border-white/10 rounded-xl',
+};
+
+const DESKTOP_QUERY = '(min-width: 1024px)';
+
+function isNativeApp() {
+  return typeof window !== 'undefined'
+    && typeof window.Capacitor?.isNativePlatform === 'function'
+    && window.Capacitor.isNativePlatform() === true;
+}
+
+function getIsDesktop() {
+  return typeof window !== 'undefined' && !isNativeApp() && !!window.matchMedia?.(DESKTOP_QUERY).matches;
+}
+
 function getSystemTheme() {
   return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches
     ? 'light'
@@ -66,16 +123,28 @@ export function ThemeProvider({ children }) {
     return () => media.removeEventListener('change', handleChange);
   }, []);
 
+  const [isDesktop, setIsDesktop] = useState(getIsDesktop);
+
+  useEffect(() => {
+    const media = window.matchMedia?.(DESKTOP_QUERY);
+    if (!media) return undefined;
+    const handleChange = () => setIsDesktop(getIsDesktop());
+    media.addEventListener('change', handleChange);
+    return () => media.removeEventListener('change', handleChange);
+  }, []);
+
   const toggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
     setTheme(newTheme);
     localStorage.setItem('mqtt_theme', newTheme);
   };
 
-  const t = theme === 'light' ? lightTheme : darkTheme;
+  const mobileTheme = theme === 'light' ? lightTheme : darkTheme;
+  const desktopTheme = theme === 'light' ? desktopLightTheme : desktopDarkTheme;
+  const t = isDesktop ? desktopTheme : mobileTheme;
 
   return (
-    <ThemeContext.Provider value={{ theme, t, toggleTheme }}>
+    <ThemeContext.Provider value={{ theme, t, isDesktop, toggleTheme }}>
       {children}
     </ThemeContext.Provider>
   );
