@@ -11,7 +11,7 @@ import SubscriptionPanel from './SubscriptionPanel.jsx';
 export default function Sidebar({ mobileOpen = false, onClose }) {
   const { theme, t, toggleTheme } = useTheme();
   const { connectStatus, connectDuration, reconnectCount, connection } = useMqtt();
-  const { isCloudConnected, setShowSyncModal } = useAppData();
+  const { setShowSyncModal } = useAppData();
 
   return (
     <aside className={`fixed inset-y-0 left-0 z-50 w-80 max-w-[86vw] ${mobileOpen ? 'flex translate-x-0' : 'hidden -translate-x-full'} lg:static lg:flex lg:w-80 lg:max-w-none lg:translate-x-0 ${t.bgSecondary} backdrop-blur-xl border-r ${t.borderLight} flex-col shrink-0 transition-transform duration-200 lg:transition-colors`}>
@@ -86,15 +86,10 @@ export default function Sidebar({ mobileOpen = false, onClose }) {
       <div className={`p-4 border-t ${t.borderLight}`}>
         <button
           onClick={() => setShowSyncModal(true)}
-          className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
-            isCloudConnected
-              ? `${theme === 'light' ? 'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100' : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/30'}`
-              : `${t.bgTertiary} ${t.textSecondary} border ${t.border} ${t.bgHover}`
-          }`}
+          className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all ${t.bgTertiary} ${t.textSecondary} border ${t.border} ${t.bgHover}`}
         >
           <Settings className="w-4 h-4" />
-          <span>同步与备份</span>
-          {isCloudConnected && <span className={`text-[10px] px-2 py-0.5 rounded-full border ${theme === 'light' ? 'border-indigo-200 text-indigo-600' : 'border-indigo-500/30 text-indigo-300'}`}>已连接</span>}
+          <span>备份与导入</span>
         </button>
       </div>
     </aside>

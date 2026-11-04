@@ -21,8 +21,6 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: {
         ...globals.browser,
-        __firebase_config: 'readonly',
-        __app_id: 'readonly',
       },
       parserOptions: {
         ecmaVersion: 'latest',

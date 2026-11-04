@@ -17,7 +17,6 @@ Northrealm（NR）是一个 MQTT 调试器 / 客户端：
 - `src/main.jsx`：React 渲染入口，直接挂载 `App`
 - `src/app/App.jsx`：主应用组合入口（当前负责 Provider 组装和页面壳层）
 - `src/mqtt/runtime.js`：运行时探测（是否 Electron/是否 preload 注入成功）
-- `src/mqtt/e2ee.js`：云同步可选加密（PBKDF2 + AES-GCM 的 envelope）
 - `electron/main.cjs`：Electron 主进程，创建窗口并加载页面
 - `electron/preload.cjs`：preload 脚本，尝试 `require('mqtt')` 并注入到 `window`
 - `scripts/electron-dev.cjs`：开发模式下启动 Electron，并等待 Vite dev server
@@ -75,22 +74,9 @@ flowchart LR
 - 日志通常通过 `addLog(...)` 进入状态，并被限制长度（避免无限增长）。
 - 订阅列表会影响 topic 过滤（只显示匹配的消息）。
 
-### 5.3 云同步（Firebase/Firestore，可选）
+### 5.3 备份与导入
 
-```mermaid
-flowchart LR
-  UI[选择同步空间/输入口令] --> App[React: src/app/App.jsx]
-  App -->|onSnapshot| Firestore[(Firestore Doc)]
-  App -->|setDoc| Firestore
-  App -->|encryptJson/decryptJson| E2EE[src/mqtt/e2ee.js]
-  App --> Local[localStorage: configs/actions/subscriptions]
-  Local --> App
-```
-
-要点：
-
-- 云同步依赖全局注入的 `__firebase_config`（缺失则自动降级为纯本地模式）。
-- 若启用加密：写入 Firestore 的 payload 会被封装为加密 envelope；口令存在 sessionStorage（可选记住）。
+云同步（Firebase）已在 0.1.16 移除。配置、快捷指令、订阅可通过“备份与导入”导出为 JSON 文件，并在另一台设备导入（默认不含密码）。
 
 ## 6. 本地持久化（你改任何功能都绕不开）
 
@@ -104,8 +90,6 @@ flowchart LR
 - `mqtt_theme`：主题
 - `mqtt_auto_reconnect`：自动重连开关
 - `mqtt_debug_packet_log`：是否记录 packet 调试日志
-- `mqtt_sync_id`：云同步空间 ID（最后一次）
-- `mqtt_sync_encrypt`：云同步加密开关
 - `mqtt_dev_mode`：开发模式开关（某些诊断输出/行为会不同）
 
 ## 7. 推荐阅读路线（按顺序读，避免迷路）
@@ -114,9 +98,8 @@ flowchart LR
 2) `src/mqtt/runtime.js`：先搞清楚“如何判断桌面端能力”
 3) `electron/main.cjs`：了解 Desktop 是怎么加载前端页面的
 4) `electron/preload.cjs`：了解 `window.mqtt` 与诊断字段从哪来
-5) `src/mqtt/e2ee.js`：了解云同步加密 envelope 的结构
-6) 最后再看 `src/app/App.jsx`：
-   - 先找“初始化（加载 mqtt / 读 localStorage / Firebase 初始化）”
+5) 最后再看 `src/app/App.jsx`：
+   - 先找“初始化（加载 mqtt / 读 localStorage）”
    - 再找“连接/订阅/发布/消息回调”
    - 再看“日志过滤与 UI 渲染”
 
