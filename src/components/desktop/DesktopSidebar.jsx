@@ -1,44 +1,36 @@
 import React, { useRef, useState } from 'react';
-import { Binary, ChevronDown, ChevronUp, FileText, Moon, Plus, Save, SunDim, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, FileText, Moon, Plus, Save, SunDim, Trash2 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext.jsx';
 import { useMqtt } from '../../contexts/MqttContext.jsx';
 import { useAppData } from '../../contexts/AppDataContext.jsx';
 import { useSavedConfigActions } from '../../hooks/useSavedConfigActions.js';
-import { useMqttConnectionProbe } from '../../hooks/useMqttConnectionProbe.js';
 import { formatDuration } from '../../utils/formatters.js';
 import ConnectionActionButton from '../connection-panel/ConnectionActionButton.jsx';
-import ConnectionAdvancedSection from '../connection-panel/ConnectionAdvancedSection.jsx';
-import ConnectionProbeAction from '../connection-panel/ConnectionProbeAction.jsx';
 import ConfigPicker from './ConfigPicker.jsx';
+import DesktopBackupModal from './DesktopBackupModal.jsx';
 
 // 桌面端侧栏（v0.1.15 Windows 版外观）：窄栏、订阅主题、选择配置下拉、无收发计数。
 export default function DesktopSidebar({ open = true }) {
   const { theme, t, toggleTheme } = useTheme();
   const {
-    isDesktopShell, sdkReady, client, getDesktopTcpCapable,
+    isDesktopShell, sdkReady, client,
     connectStatus, connectDuration, reconnectCount,
     connection, setConnection, advancedConfig, setAdvancedConfig,
     showAdvanced, setShowAdvanced, configCollapsed, setConfigCollapsed,
-    autoReconnect, setAutoReconnect, autoResubscribe, setAutoResubscribe, showRetained, setShowRetained,
+    autoReconnect, setAutoReconnect, autoResubscribe, setAutoResubscribe,
     handleConnect, handleDisconnect, handleProtocolChange, handlePortChange,
     subTopic, setSubTopic, subscriptionsCollapsed, setSubscriptionsCollapsed,
     handleSubscribe, handleUnsubscribe, logTopicFilters, toggleLogTopicFilter, clearLogTopicFilters,
-    logViewMode, setLogViewMode,
   } = useMqtt();
-  const { savedConfigs, subscriptions, setShowSyncModal } = useAppData();
+  const { savedConfigs, subscriptions } = useAppData();
+  const [showBackup, setShowBackup] = useState(false);
   const { handleSaveConfig, handleLoadConfig, handleDeleteConfig } = useSavedConfigActions();
   const [newTopicOpen, setNewTopicOpen] = useState(false);
   const subTopicInputRef = useRef(null);
-  const { isTesting, probeResult, testConnection } = useMqttConnectionProbe({
-    advancedConfig,
-    connection,
-    isDesktopShell,
-    mqtt: typeof window === 'undefined' ? null : window.mqtt,
-    tcpCapable: getDesktopTcpCapable(),
-  });
 
   const isConnected = connectStatus === 'connected';
   const configCollapsedNow = configCollapsed;
+  const labelStyle = 'block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider pl-1';
   const chevronCls = 'text-slate-600 group-hover:text-slate-800 dark:group-hover:text-slate-300 transition-colors';
   const sectionTitleCls = 'flex items-center gap-2 font-bold text-[13px] text-[#333D4F] dark:text-[#E6EDF3]';
   const subscribeNow = () => { handleSubscribe(); setNewTopicOpen(false); };
@@ -55,7 +47,7 @@ export default function DesktopSidebar({ open = true }) {
         </div>
         <div className="flex items-center gap-1.5">
           <button
-            onClick={() => setShowSyncModal(true)}
+            onClick={() => setShowBackup(true)}
             className={`p-1.5 rounded-lg ${t.textMuted} ${t.bgHover} transition-colors`}
             title="备份与导入"
             aria-label="备份与导入"
@@ -162,73 +154,55 @@ export default function DesktopSidebar({ open = true }) {
                   />
                 )}
 
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    value={connection.username}
-                    onChange={(e) => setConnection({ ...connection, username: e.target.value })}
-                    disabled={isConnected}
-                    placeholder="用户名"
-                    className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-[13px] focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none transition-all disabled:opacity-50 ${t.text}`}
-                  />
-                  <input
-                    type="password"
-                    value={connection.password}
-                    onChange={(e) => setConnection({ ...connection, password: e.target.value })}
-                    disabled={isConnected}
-                    placeholder="密码"
-                    className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-[13px] focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none transition-all disabled:opacity-50 ${t.text}`}
-                  />
-                </div>
+                <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-brand-500 transition-colors">
+                  {showAdvanced ? <ChevronUp size={12} /> : <ChevronDown size={12} />} 高级设置 (Auth)
+                </button>
 
-                <div className="flex items-center justify-between gap-3">
-                  <div className={`flex items-center gap-2 text-xs ${t.textSecondary}`}>
-                    <Binary className="h-4 w-4" aria-hidden="true" />
-                    <span>接收消息显示</span>
+                {showAdvanced && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className={labelStyle}>Client ID</label>
+                      <input type="text" value={connection.clientId} onChange={(e) => setConnection({ ...connection, clientId: e.target.value })} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-[13px] focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none transition-all disabled:opacity-50 ${t.text}`} />
+                    </div>
+                    <div>
+                      <label className={labelStyle}>Auth</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input type="text" value={connection.username} onChange={(e) => setConnection({ ...connection, username: e.target.value })} disabled={isConnected} placeholder="用户名" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-[13px] focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none transition-all disabled:opacity-50 ${t.text}`} />
+                        <input type="password" value={connection.password} onChange={(e) => setConnection({ ...connection, password: e.target.value })} disabled={isConnected} placeholder="密码" className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-3 py-2 text-[13px] focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none transition-all disabled:opacity-50 ${t.text}`} />
+                      </div>
+                    </div>
+                    <div className={`p-3 ${t.bgTertiary} rounded-lg border ${t.borderLight} space-y-2`}>
+                      <div className="flex gap-2">
+                        <div className="flex-1">
+                          <label className={`text-[11px] ${t.textMuted} block mb-1`}>Keep Alive (秒)</label>
+                          <input type="number" value={advancedConfig.keepalive} onChange={(e) => setAdvancedConfig({ ...advancedConfig, keepalive: e.target.value })} className={`w-full ${t.bgInput} border ${t.border} rounded-lg px-2 py-1 text-xs ${t.text}`} />
+                        </div>
+                        <div className="flex-1">
+                          <label className={`text-[11px] ${t.textMuted} block mb-1`}>协议版本</label>
+                          <select value={advancedConfig.protocolVersion} onChange={(e) => setAdvancedConfig({ ...advancedConfig, protocolVersion: Number(e.target.value) })} className={`w-full rounded-lg px-2 py-1 text-xs themed-select ${t.bgInput} border ${t.border} outline-none ${t.text}`}>
+                            <option value={3}>MQTT 3.1</option>
+                            <option value={4}>MQTT 3.1.1</option>
+                            <option value={5}>MQTT 5.0</option>
+                          </select>
+                        </div>
+                      </div>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="checkbox" checked={advancedConfig.clean} onChange={(e) => setAdvancedConfig({ ...advancedConfig, clean: e.target.checked })} className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-brand-600" />
+                        <span className={`text-xs ${t.textSecondary}`}>Clean Session</span>
+                      </label>
+                      <div className={`flex items-center gap-2 pt-2 border-t ${t.borderLight}`}>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input type="checkbox" checked={autoResubscribe} onChange={(e) => setAutoResubscribe(e.target.checked)} className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-emerald-600" />
+                          <span className={`text-xs ${t.textSecondary}`}>自动重订阅</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer ml-auto">
+                          <input type="checkbox" checked={autoReconnect} onChange={(e) => setAutoReconnect(e.target.checked)} className="rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-amber-600" />
+                          <span className={`text-xs ${t.textSecondary}`}>自动重连</span>
+                        </label>
+                      </div>
+                    </div>
                   </div>
-                  <div className={`grid grid-cols-2 rounded-md border p-0.5 ${t.border} ${t.bgTertiary}`} role="group" aria-label="接收消息显示格式">
-                    {['text', 'hex'].map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        aria-pressed={logViewMode === mode}
-                        onClick={() => {
-                          setLogViewMode(mode);
-                          setConnection((current) => ({ ...current, logViewMode: mode }));
-                        }}
-                        className={`h-7 min-w-12 rounded px-2 text-xs font-medium transition-colors ${
-                          logViewMode === mode ? 'bg-brand-500 text-white' : t.textMuted
-                        }`}
-                      >
-                        {mode.toUpperCase()}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <ConnectionAdvancedSection
-                  advancedConfig={advancedConfig}
-                  autoReconnect={autoReconnect}
-                  autoResubscribe={autoResubscribe}
-                  setAdvancedConfig={setAdvancedConfig}
-                  setAutoReconnect={setAutoReconnect}
-                  setAutoResubscribe={setAutoResubscribe}
-                  setShowAdvanced={setShowAdvanced}
-                  setShowRetained={setShowRetained}
-                  showAdvanced={showAdvanced}
-                  showRetained={showRetained}
-                  t={t}
-                />
-
-                <ConnectionProbeAction
-                  disabledReason={connectStatus === 'disconnected' ? '' : '请先断开正式连接'}
-                  isTesting={isTesting}
-                  onTest={testConnection}
-                  probeResult={probeResult}
-                  sdkReady={sdkReady}
-                  t={t}
-                  theme={theme}
-                />
+                )}
 
                 <ConnectionActionButton
                   connectStatus={connectStatus}
@@ -357,6 +331,7 @@ export default function DesktopSidebar({ open = true }) {
           </div>
         </section>
       </div>
+      {showBackup && <DesktopBackupModal onClose={() => setShowBackup(false)} />}
     </aside>
   );
 }
