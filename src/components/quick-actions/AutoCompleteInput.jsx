@@ -20,7 +20,7 @@ export function AutoCompleteInput({ varName, value, onChange, t, placeholder, au
         onBlur={() => setTimeout(() => setFocused(false), 150)}
         placeholder={placeholder}
         autoFocus={autoFocus}
-        className={`w-full px-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm ${t.text} focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500`}
+        className={`w-full px-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm ${t.text} focus:outline-none focus:ring-2 ${t.focusRing}`}
       />
       {showDropdown && (
         <div className={`absolute z-10 left-0 right-0 mt-1 ${t.bgSecondary} border ${t.border} rounded-xl shadow-lg max-h-40 overflow-y-auto custom-scrollbar`}>

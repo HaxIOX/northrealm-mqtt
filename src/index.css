@@ -1,3 +1,19 @@
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-latin-var.woff2') format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-var.woff2') format('woff2-variations');
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -24,5 +40,38 @@ body,
   .mobile-publish-bar {
     height: 220px;
     padding-bottom: 0;
+  }
+}
+
+/* 桌面端（宽屏且非原生 App）：Inter / JetBrains Mono 本地字体、清晰度与键盘焦点描边。手机端不套用。 */
+.desktop-ui {
+  font-family: Inter, 'Segoe UI', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+.desktop-ui .font-mono {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+}
+
+.desktop-ui button:focus-visible,
+.desktop-ui [role='button']:focus-visible,
+.desktop-ui select:focus-visible {
+  outline: 2px solid #5b8def;
+  outline-offset: 2px;
+}
+
+.desktop-ui ::selection {
+  background: rgba(37, 99, 235, 0.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-ui *,
+  .desktop-ui *::before,
+  .desktop-ui *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

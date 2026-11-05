@@ -26,9 +26,12 @@ const logMain = (message, extra) => {
 
 let mainWindow = null;
 
-// 窗口最小尺寸，同时也是首次启动（没有保存过窗口状态）时的默认尺寸
-const MIN_WIDTH = 1000;
+// 窗口最小尺寸
+const MIN_WIDTH = 985;
 const MIN_HEIGHT = 650;
+// 首次启动（没有保存过窗口状态）时的默认尺寸
+const DEFAULT_WIDTH = 985;
+const DEFAULT_HEIGHT = 700;
 const STATE_FILE = path.join(app.getPath('userData'), 'window-state.json');
 
 // 读取上次窗口状态；文件缺失/损坏时回退默认，屏幕外的坐标丢弃（只保留尺寸）
@@ -85,8 +88,8 @@ if (!gotLock) {
 
     mainWindow = new BrowserWindow({
       ...state,
-      width: state.width ?? MIN_WIDTH,
-      height: state.height ?? MIN_HEIGHT,
+      width: state.width ?? DEFAULT_WIDTH,
+      height: state.height ?? DEFAULT_HEIGHT,
       minWidth: MIN_WIDTH,
       minHeight: MIN_HEIGHT,
       autoHideMenuBar: true,

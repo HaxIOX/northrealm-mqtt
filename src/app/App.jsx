@@ -9,6 +9,8 @@ import QuickActionsModal from '../components/QuickActionsModal.jsx';
 import MulticastModal from '../components/MulticastModal.jsx';
 import SyncModal from '../components/SyncModal.jsx';
 import Sidebar from '../components/Sidebar.jsx';
+import DesktopMain from '../components/desktop/DesktopMain.jsx';
+import DesktopSidebar from '../components/desktop/DesktopSidebar.jsx';
 import MainContent from '../components/MainContent.jsx';
 import MobileActionMenu from '../components/mobile/MobileActionMenu.jsx';
 import MobileConnectionModal from '../components/mobile/MobileConnectionModal.jsx';
@@ -22,12 +24,13 @@ function AddLogBridge({ addLogRef }) {
 }
 
 function AppShell() {
-  const { theme, t } = useTheme();
+  const { theme, t, isDesktop } = useTheme();
   const { backupImportInputRef, handleImportBackupFileChange } = useAppData();
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [mobileConnectionOpen, setMobileConnectionOpen] = useState(false);
   const [mobilePublishOpen, setMobilePublishOpen] = useState(false);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const edgeGestureRef = useRef(null);
   const isNativeMobile = typeof window !== 'undefined'
     && !!window.Capacitor
@@ -113,7 +116,7 @@ function AppShell() {
 
   return (
     <div
-      className={`min-h-0 overflow-hidden flex ${t.bg} ${theme === 'dark' ? 'dark' : ''}`}
+      className={`min-h-0 overflow-hidden flex ${t.bg} ${theme === 'dark' ? 'dark' : ''} ${isDesktop ? 'desktop-ui' : ''}`}
       style={{
         '--app-safe-bottom': isNativeMobile ? 'max(env(safe-area-inset-bottom), 24px)' : '0px',
         '--app-safe-top': isNativeMobile ? 'max(env(safe-area-inset-top), 24px)' : '0px',
@@ -129,9 +132,11 @@ function AppShell() {
       <QuickActionsModal />
       <MulticastModal />
       <SyncModal />
-      <Sidebar mobileOpen={false} />
-      <MainContent onOpenTopicFilters={openTopicFilter} />
-      {!mobileConnectionOpen && !mobilePublishOpen && !topicFilterOpen && (
+      {isDesktop ? <DesktopSidebar open={desktopSidebarOpen} /> : <Sidebar mobileOpen={false} />}
+      {isDesktop
+        ? <DesktopMain sidebarOpen={desktopSidebarOpen} onToggleSidebar={() => setDesktopSidebarOpen((open) => !open)} />
+        : <MainContent onOpenTopicFilters={openTopicFilter} />}
+      {!isDesktop && !mobileConnectionOpen && !mobilePublishOpen && !topicFilterOpen && (
         <MobileActionMenu
           open={mobileActionsOpen}
           onToggle={setMobileActionsOpen}
@@ -139,9 +144,9 @@ function AppShell() {
           onPublish={openMobilePublish}
         />
       )}
-      {mobileConnectionOpen && <MobileConnectionModal open onClose={closeMobileConnection} />}
-      {mobilePublishOpen && <MobilePublishSheet open onClose={closeMobilePublish} />}
-      {topicFilterOpen && <TopicFilterDrawer open onClose={closeTopicFilter} />}
+      {!isDesktop && mobileConnectionOpen && <MobileConnectionModal open onClose={closeMobileConnection} />}
+      {!isDesktop && mobilePublishOpen && <MobilePublishSheet open onClose={closeMobilePublish} />}
+      {!isDesktop && topicFilterOpen && <TopicFilterDrawer open onClose={closeTopicFilter} />}
       <input
         ref={backupImportInputRef}
         type="file"

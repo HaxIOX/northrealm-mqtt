@@ -50,16 +50,16 @@ function ActionRow({
               {displayNameOverride || action.name}
             </div>
             {isTemplate && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${theme === 'light' ? 'bg-purple-100 text-purple-600 border border-purple-200' : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'}`}>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${t.tagBadge}`}>
                 模板
               </span>
             )}
           </div>
           <div className={`text-[11px] ${t.textMuted} truncate mt-1`}>
-            {isTemplate ? renderTemplateStr(action.topic, theme) : action.topic}
+            {isTemplate ? renderTemplateStr(action.topic, t.tagVar) : action.topic}
           </div>
           <div className={`text-[11px] ${t.textSecondary} truncate mt-1 font-mono`}>
-            {isTemplate ? renderTemplateStr(String(action.payload || ''), theme) : String(action.payload || '')}
+            {isTemplate ? renderTemplateStr(String(action.payload || ''), t.tagVar) : String(action.payload || '')}
           </div>
         </div>
         <div className="shrink-0 flex items-center gap-2">

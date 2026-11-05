@@ -3,18 +3,17 @@ import { Binary, ChevronDown, ChevronUp, Server } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext.jsx';
 import { useMqtt } from '../contexts/MqttContext.jsx';
 import { useAppData } from '../contexts/AppDataContext.jsx';
-import { useModal } from '../contexts/ModalContext.jsx';
 import { PRESET_BROKERS } from '../utils/constants.js';
 import ConnectionActionButton from './connection-panel/ConnectionActionButton.jsx';
 import ConnectionAdvancedSection from './connection-panel/ConnectionAdvancedSection.jsx';
 import ConnectionConfigToolbar from './connection-panel/ConnectionConfigToolbar.jsx';
 import ConnectionFormFields from './connection-panel/ConnectionFormFields.jsx';
 import ConnectionProbeAction from './connection-panel/ConnectionProbeAction.jsx';
+import { useSavedConfigActions } from '../hooks/useSavedConfigActions.js';
 import { useMqttConnectionProbe } from '../hooks/useMqttConnectionProbe.js';
 
 export default function ConnectionPanel({ forceExpanded = false }) {
   const { theme, t } = useTheme();
-  const { openInputModal, openConfirmModal } = useModal();
   const {
     isDesktopShell, sdkReady, connectStatus, reconnectCount, getDesktopTcpCapable,
     connection, setConnection, advancedConfig, setAdvancedConfig,
@@ -22,9 +21,9 @@ export default function ConnectionPanel({ forceExpanded = false }) {
     selectedPresetBroker, setSelectedPresetBroker,
     autoReconnect, setAutoReconnect, autoResubscribe, setAutoResubscribe, showRetained, setShowRetained,
     handleConnect, handleDisconnect, handleProtocolChange, handlePortChange,
-    addLog, logViewMode, setLogViewMode,
+    logViewMode, setLogViewMode,
   } = useMqtt();
-  const { savedConfigs, updateData } = useAppData();
+  const { savedConfigs } = useAppData();
   const isCollapsed = forceExpanded ? false : configCollapsed;
   const {
     isTesting,
@@ -47,55 +46,7 @@ export default function ConnectionPanel({ forceExpanded = false }) {
     }));
   };
 
-  const handleSaveConfig = () => {
-    openInputModal("配置名称", connection.name || "新配置", (name) => {
-      if (!name) return;
-      const newConfig = { ...connection, name };
-      setConnection(newConfig);
-      const newConfigs = [...savedConfigs.filter(c => c.name !== name), newConfig];
-      updateData('configs', newConfigs);
-    });
-  };
-
-  const handleLoadConfig = (e) => {
-    const config = savedConfigs.find(c => c.name === e.target.value);
-    if (!config) return;
-    let correctedConfig = { ...config, clientId: connection.clientId };
-    const port = Number(config.port);
-    const protocol = config.protocol;
-
-    if ((protocol === 'ws' || protocol === 'wss') && (port === 1883 || port === 8883)) {
-      if (isDesktopShell) {
-        correctedConfig.protocol = port === 1883 ? 'mqtt' : 'mqtts';
-        addLog('system', '', `⚠️ 已自动修正协议：${protocol}://${port} → ${correctedConfig.protocol}://${port}`);
-      } else {
-        correctedConfig.port = protocol === 'wss' ? 8084 : 8083;
-        addLog('system', '', `⚠️ 已自动修正端口：${protocol}://${port} → ${protocol}://${correctedConfig.port}`);
-        addLog('system', '', `提示：浏览器不支持 MQTT TCP 端口 (1883/8883)，已改用 WebSocket 端口`);
-      }
-    }
-    if ((protocol === 'mqtt' || protocol === 'mqtts') && (port === 8083 || port === 8084)) {
-      if (isDesktopShell) {
-        correctedConfig.port = protocol === 'mqtts' ? 8883 : 1883;
-        addLog('system', '', `⚠️ 已自动修正端口：${protocol}://${port} → ${protocol}://${correctedConfig.port}`);
-      } else {
-        correctedConfig.protocol = port === 8084 ? 'wss' : 'ws';
-        addLog('system', '', `⚠️ 已自动修正协议：${protocol}://${port} → ${correctedConfig.protocol}://${port}`);
-        addLog('system', '', `提示：浏览器不支持 MQTT TCP 协议，已改用 WebSocket`);
-      }
-    }
-    setLogViewMode(correctedConfig.logViewMode === 'hex' ? 'hex' : 'text');
-    setConnection(correctedConfig);
-  };
-
-  const handleDeleteConfig = () => {
-    if (!connection.name) return;
-    openConfirmModal(`确定删除配置 "${connection.name}" 吗?`, () => {
-      const newConfigs = savedConfigs.filter(c => c.name !== connection.name);
-      updateData('configs', newConfigs);
-      setConnection({ ...connection, name: '' });
-    }, { confirmText: '确定删除', confirmVariant: 'danger' });
-  };
+  const { handleSaveConfig, handleLoadConfig, handleDeleteConfig } = useSavedConfigActions();
 
   return (
     <div className="mb-3">
@@ -118,8 +69,8 @@ export default function ConnectionPanel({ forceExpanded = false }) {
           <ConnectionConfigToolbar
             connectStatus={connectStatus}
             connectionName={connection.name}
-            onDeleteConfig={handleDeleteConfig}
-            onLoadConfig={handleLoadConfig}
+            onDeleteConfig={() => handleDeleteConfig()}
+            onLoadConfig={(e) => handleLoadConfig(e.target.value)}
             onPresetChange={(e) => {
               setSelectedPresetBroker(e.target.value);
               if (e.target.value) applyPresetBroker(e.target.value);

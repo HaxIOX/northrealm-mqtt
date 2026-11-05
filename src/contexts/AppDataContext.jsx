@@ -7,7 +7,6 @@ import {
   readLocalStorageJsonObject,
   writeLocalStorageJson,
 } from '../hooks/useLocalStorage.js';
-import { isFirebaseAvailable, useAppCloudSyncState } from '../hooks/useAppCloudSyncState.js';
 import {
   downloadJsonFile, buildBackupPayload, buildMessageLogsExportPayload,
   parseBackup, mergeConfigsByName, mergeActionsById,
@@ -15,8 +14,6 @@ import {
 } from '../utils/backup.js';
 
 const AppDataContext = createContext(null);
-
-export { isFirebaseAvailable };
 
 export function AppDataProvider({ children, isDesktopShell, addLog }) {
   const { openConfirmModal } = useModal();
@@ -41,36 +38,8 @@ export function AppDataProvider({ children, isDesktopShell, addLog }) {
   const [quickActionGroupCollapsed, setQuickActionGroupCollapsed] = useState(() => readLocalStorageJsonObject('mqtt_quick_action_group_collapsed', {}) || {});
 
   const backupImportInputRef = useRef(null);
-  const {
-    cloudCryptoError,
-    handleConnectSync,
-    handleDisconnectSync,
-    inputSpaceId,
-    isCloudConnected,
-    rememberPassphrase,
-    saveToCloud,
-    setInputSpaceId,
-    setRememberPassphrase,
-    setShowSyncModal,
-    setSyncEncryptEnabled,
-    setSyncPassphrase,
-    showSyncModal,
-    syncEncryptEnabled,
-    syncPassphrase,
-    syncSpaceId,
-    user,
-  } = useAppCloudSyncState({
-    addLog,
-    isDesktopShell,
-    lastSubscriptionsRef,
-    multicastTargetsRef,
-    quickActionsRef,
-    savedConfigsRef,
-    setMulticastTargets,
-    setQuickActions,
-    setSavedConfigs,
-    setSubscriptions,
-  });
+  // 备份弹窗开关（手机端侧栏的“备份”按钮使用）
+  const [showSyncModal, setShowSyncModal] = useState(false);
 
   // --- localStorage persistence ---
   useEffect(() => {
@@ -120,22 +89,18 @@ export function AppDataProvider({ children, isDesktopShell, addLog }) {
       setSavedConfigs(newData);
       savedConfigsRef.current = newData;
       writeLocalStorageJson('mqtt_configs', newData);
-      if (syncSpaceId) saveToCloud(newData, null, null);
     } else if (type === 'actions') {
       setQuickActions(newData);
       quickActionsRef.current = newData;
       writeLocalStorageJson('mqtt_quick_actions', newData);
-      if (syncSpaceId) saveToCloud(null, newData, null);
     } else if (type === 'subscriptions') {
       setSubscriptions(newData);
       writeLocalStorageJson('mqtt_subscriptions', newData);
       lastSubscriptionsRef.current = newData;
-      if (syncSpaceId) saveToCloud(null, null, newData);
     } else if (type === 'multicastTargets') {
       setMulticastTargets(newData);
       multicastTargetsRef.current = newData;
       writeLocalStorageJson('mqtt_multicast_targets', newData);
-      if (syncSpaceId) saveToCloud(null, null, null, newData);
     }
   };
 
@@ -144,7 +109,6 @@ export function AppDataProvider({ children, isDesktopShell, addLog }) {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       writeLocalStorageJson('mqtt_subscriptions', next);
       lastSubscriptionsRef.current = next;
-      if (syncSpaceId) saveToCloud(null, null, next);
       return next;
     });
   };
@@ -290,13 +254,7 @@ export function AppDataProvider({ children, isDesktopShell, addLog }) {
   };
 
   const value = {
-    isFirebaseAvailable,
-    user, syncSpaceId, inputSpaceId, setInputSpaceId,
-    isCloudConnected, showSyncModal, setShowSyncModal,
-    syncEncryptEnabled, setSyncEncryptEnabled,
-    syncPassphrase, setSyncPassphrase,
-    rememberPassphrase, setRememberPassphrase,
-    cloudCryptoError,
+    showSyncModal, setShowSyncModal,
     savedConfigs, quickActions, subscriptions, lastSubscriptionsRef,
     multicastTargets, multicastSelectedIds,
     recentActionIds, quickActionGroupCollapsed, setQuickActionGroupCollapsed,
@@ -306,7 +264,6 @@ export function AppDataProvider({ children, isDesktopShell, addLog }) {
     getSelectedMulticastTopics, upsertMulticastTargetsFromTopics,
     toggleMulticastTargetSelected, selectAllMulticastTargets, clearMulticastSelection,
     setMulticastSelectedIds,
-    handleConnectSync, handleDisconnectSync,
     handleExportBackup, handleImportBackupFileChange, exportMessageLogs,
   };
 

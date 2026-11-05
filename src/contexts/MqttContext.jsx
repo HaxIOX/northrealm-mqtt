@@ -161,6 +161,7 @@ export function MqttProvider({ children }) {
     stopTimer,
     syncTimerIntervalFromInput,
     timerEnabled,
+    timerNextSendAt,
     timerInterval,
     timerIntervalInput,
     toggleTimer,
@@ -246,6 +247,12 @@ export function MqttProvider({ children }) {
         setMulticastQuery('');
         return;
       }
+      // Ctrl/Cmd + P: 打开快捷指令面板
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key?.toLowerCase() === 'p') {
+        e.preventDefault();
+        setShowQuickActionsPanel(true);
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         handlePublishRef.current?.();
@@ -297,7 +304,7 @@ export function MqttProvider({ children }) {
     isAutoScroll, setIsAutoScroll, logViewMode, setLogViewMode,
     logsEndRef, debugPacketLog, setDebugPacketLog,
     eventCenterOpen, setEventCenterOpen, eventFilter, setEventFilter,
-    msgStats, timerEnabled, timerInterval, timerIntervalInput, setTimerIntervalInput,
+    msgStats, timerEnabled, timerNextSendAt, timerInterval, timerIntervalInput, setTimerIntervalInput,
     publishEditorOpen, setPublishEditorOpen, publishEditorValue, setPublishEditorValue,
     showQuickActionsPanel, setShowQuickActionsPanel, quickActionQuery, setQuickActionQuery,
     pendingTemplateAction, setPendingTemplateAction,
