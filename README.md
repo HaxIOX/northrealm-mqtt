@@ -39,7 +39,8 @@ Desktop / web with a keyboard. On macOS use `Cmd` instead of `Ctrl`.
 | `Ctrl+L` | Clear logs and counters |
 | `Esc` | Close the topmost panel (event center, quick actions, multicast) or popup |
 | `Enter` | Subscribe in the topic input; confirm in dialogs |
-| `Shift+Click` on a quick-action chip (desktop) | Fill the publish form without sending |
+| `Click` on a quick-action chip (desktop) | Fill the publish form without sending |
+| `Shift+Click` on a quick-action chip (desktop) | Send the action immediately |
 
 ## Protocol support
 
