@@ -23,6 +23,11 @@ const lightTheme = {
   accentBg: 'bg-black',
   accentText: 'text-black',
   accentLight: 'bg-neutral-100',
+  tagVar: 'bg-purple-100 text-purple-700',
+  tagBadge: 'bg-purple-100 text-purple-600 border border-purple-200',
+  tagLabel: 'text-purple-600',
+  focusRing: 'focus:ring-indigo-500/20 focus:border-indigo-500',
+  primaryBtn: 'bg-indigo-500 text-white hover:bg-indigo-600',
 };
 
 const darkTheme = {
@@ -44,6 +49,11 @@ const darkTheme = {
   accentBg: 'bg-white',
   accentText: 'text-white',
   accentLight: 'bg-neutral-900',
+  tagVar: 'bg-purple-500/20 text-purple-300',
+  tagBadge: 'bg-purple-500/20 text-purple-300 border border-purple-500/30',
+  tagLabel: 'text-purple-300',
+  focusRing: 'focus:ring-indigo-500/20 focus:border-indigo-500',
+  primaryBtn: 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30',
 };
 
 // 桌面端（宽屏且非原生 App）配色：蓝色强调色，沿用 v0.1.15 Windows 包的外观。手机端继续用上面的单色主题。
@@ -66,6 +76,11 @@ const desktopLightTheme = {
   accentBg: 'bg-brand-500',
   accentText: 'text-brand-500',
   accentLight: 'bg-brand-50',
+  tagVar: 'bg-brand-100 text-brand-700',
+  tagBadge: 'bg-brand-50 text-brand-600 border border-brand-200',
+  tagLabel: 'text-brand-600',
+  focusRing: 'focus:ring-brand-500/20 focus:border-brand-500',
+  primaryBtn: 'bg-brand-500 text-white hover:bg-brand-600',
   floatingPanel: 'bg-white/90 shadow-lg shadow-gray-200/40 border border-gray-200/50 rounded-xl',
 };
 
@@ -88,6 +103,11 @@ const desktopDarkTheme = {
   accentBg: 'bg-brand-400',
   accentText: 'text-brand-300',
   accentLight: 'bg-brand-400/10',
+  tagVar: 'bg-brand-400/20 text-brand-300',
+  tagBadge: 'bg-brand-400/10 text-brand-300 border border-brand-400/30',
+  tagLabel: 'text-brand-300',
+  focusRing: 'focus:ring-brand-400/30 focus:border-brand-400',
+  primaryBtn: 'bg-brand-400/20 text-brand-300 hover:bg-brand-400/30',
   floatingPanel: 'bg-[#18181B]/90 shadow-xl shadow-black/40 border border-white/10 rounded-xl',
 };
 

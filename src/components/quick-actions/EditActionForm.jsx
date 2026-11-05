@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Check } from 'lucide-react';
 
-export function EditActionForm({ action, theme, t, onSave, onCancel }) {
+export function EditActionForm({ action, t, onSave, onCancel }) {
   const [form, setForm] = useState({
     name: action?.name || '',
     topic: action?.topic || '',
@@ -37,7 +37,7 @@ export function EditActionForm({ action, theme, t, onSave, onCancel }) {
             value={form.name}
             onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
             autoFocus
-            className={`w-full px-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm ${t.text} focus:outline-none focus:ring-2 focus:ring-indigo-500/20`}
+            className={`w-full px-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm ${t.text} focus:outline-none focus:ring-2 ${t.focusRing}`}
           />
         </div>
         <div>
@@ -46,7 +46,7 @@ export function EditActionForm({ action, theme, t, onSave, onCancel }) {
             type="text"
             value={form.topic}
             onChange={(e) => setForm((prev) => ({ ...prev, topic: e.target.value }))}
-            className={`w-full px-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm ${t.text} font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/20`}
+            className={`w-full px-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm ${t.text} font-mono focus:outline-none focus:ring-2 ${t.focusRing}`}
           />
         </div>
         <div>
@@ -55,7 +55,7 @@ export function EditActionForm({ action, theme, t, onSave, onCancel }) {
             value={form.payload}
             onChange={(e) => setForm((prev) => ({ ...prev, payload: e.target.value }))}
             rows={3}
-            className={`w-full px-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm ${t.text} font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/20 resize-none`}
+            className={`w-full px-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm ${t.text} font-mono focus:outline-none focus:ring-2 ${t.focusRing} resize-none`}
           />
         </div>
         <div className="flex gap-4">
@@ -64,7 +64,7 @@ export function EditActionForm({ action, theme, t, onSave, onCancel }) {
             <select
               value={form.qos}
               onChange={(e) => setForm((prev) => ({ ...prev, qos: Number(e.target.value) }))}
-              className={`w-full px-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm ${t.text} focus:outline-none focus:ring-2 focus:ring-indigo-500/20`}
+              className={`w-full px-3 py-2 ${t.bgInput} border ${t.border} rounded-xl text-sm ${t.text} focus:outline-none focus:ring-2 ${t.focusRing}`}
             >
               <option value={0}>0</option>
               <option value={1}>1</option>
@@ -86,7 +86,7 @@ export function EditActionForm({ action, theme, t, onSave, onCancel }) {
         <div className="flex gap-2 pt-1">
           <button
             type="submit"
-            className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${theme === 'light' ? 'bg-indigo-500 text-white hover:bg-indigo-600' : 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'}`}
+            className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${t.primaryBtn}`}
           >
             <Check className="w-4 h-4" /> 保存
           </button>

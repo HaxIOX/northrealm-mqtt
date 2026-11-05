@@ -4,7 +4,7 @@ import {
   writeLocalStorageJson,
 } from '../../hooks/useLocalStorage.js';
 
-export function renderTemplateStr(str, theme) {
+export function renderTemplateStr(str, tagVar) {
   if (!str) return null;
 
   const parts = [];
@@ -20,11 +20,7 @@ export function renderTemplateStr(str, theme) {
     parts.push(
       <span
         key={`v${match.index}`}
-        className={`inline-block px-1 rounded font-semibold ${
-          theme === 'light'
-            ? 'bg-purple-100 text-purple-700'
-            : 'bg-purple-500/20 text-purple-300'
-        }`}
+        className={`inline-block px-1 rounded font-semibold ${tagVar}`}
       >
         {match[1]}
       </span>

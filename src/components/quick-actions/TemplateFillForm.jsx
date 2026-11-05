@@ -45,18 +45,18 @@ export function TemplateFillForm({ action, theme, t, onSubmit, onCancel }) {
       <div className={`p-3 rounded-xl ${t.bgTertiary} border ${t.border} font-mono text-xs space-y-1`}>
         <div className={`${t.textMuted} flex items-center gap-1 flex-wrap`}>
           Topic:
-          <span className={t.textSecondary}>{renderTemplateStr(action.topic, theme)}</span>
+          <span className={t.textSecondary}>{renderTemplateStr(action.topic, t.tagVar)}</span>
         </div>
         <div className={`${t.textMuted} flex items-center gap-1 flex-wrap`}>
           Payload:
-          <span className={t.textSecondary}>{renderTemplateStr(String(action.payload || ''), theme)}</span>
+          <span className={t.textSecondary}>{renderTemplateStr(String(action.payload || ''), t.tagVar)}</span>
         </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">
         {vars.map((name, index) => (
           <div key={name}>
-            <label className={`text-xs font-medium mb-1 flex items-center gap-1.5 ${theme === 'light' ? 'text-purple-600' : 'text-purple-300'}`}>
+            <label className={`text-xs font-medium mb-1 flex items-center gap-1.5 ${t.tagLabel}`}>
               {name}
             </label>
             <AutoCompleteInput
