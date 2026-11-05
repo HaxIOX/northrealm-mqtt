@@ -259,10 +259,10 @@ export default function DesktopMain({ sidebarOpen, onToggleSidebar }) {
                 key={action.id}
                 type="button"
                 onClick={(e) => (e.shiftKey
-                  ? loadActionIntoPublishForm(action)
-                  : sendQuickAction(action, { openPanelForTemplate: true }))}
+                  ? sendQuickAction(action, { openPanelForTemplate: true })
+                  : loadActionIntoPublishForm(action))}
                 className="shrink-0 px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-800/80 text-slate-600 dark:text-slate-300 text-[11px] font-bold shadow-sm border border-slate-200/80 dark:border-slate-700/80 hover:border-brand-500/60 hover:text-brand-500 dark:hover:border-brand-300/60 dark:hover:text-brand-300 transition-all"
-                title={`${action.name}\n${action.topic}\n点击发送 · Shift+点击仅填入`}
+                title={`${action.name}\n${action.topic}\n点击填入发送区 · Shift+点击直接发送`}
               >
                 {action.name}
               </button>

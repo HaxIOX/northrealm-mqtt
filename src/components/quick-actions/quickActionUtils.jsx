@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   readLocalStorageJsonArray,
+  readLocalStorageJsonObject,
   writeLocalStorageJson,
 } from '../../hooks/useLocalStorage.js';
 
@@ -45,6 +46,16 @@ export function pushVarHistory(varName, value) {
 
 export function getVarHistory(varName) {
   return readLocalStorageJsonArray(`mqtt_tpl_history_${varName}`, []) || [];
+}
+
+// 模板变量的预填值：优先该指令上次填写的值，其次该变量的最近历史
+export function getPrefillVars(action, varNames) {
+  const saved = readLocalStorageJsonObject(`mqtt_action_vars_${action?.id}`, {}) || {};
+  const out = {};
+  for (const name of varNames) {
+    out[name] = saved[name] || getVarHistory(name)[0] || '';
+  }
+  return out;
 }
 
 export function splitNameByPrefix(rawName) {
