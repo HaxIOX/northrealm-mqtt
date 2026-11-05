@@ -32,20 +32,24 @@ export function useCommonQuickActions(maxCommonActions) {
     });
   })();
 
+  // 按最近使用排序；置顶指令只保证不被挤出（占用末位），不再永远排最前
   const commonActions = (() => {
     const all = Array.isArray(quickActions) ? quickActions : [];
     const byId = new Map(all.map((a) => [a.id, a]));
-    const chosen = [];
-    for (const action of pinnedActions) { if (action && chosen.length < maxCommonActions) chosen.push(action); }
-    if (chosen.length < maxCommonActions) {
-      for (const id of (recentActionIds || [])) {
-        const action = byId.get(id);
-        if (!action || chosen.some((a) => a.id === action.id)) continue;
-        chosen.push(action);
-        if (chosen.length >= maxCommonActions) break;
-      }
+    const result = [];
+    for (const id of (recentActionIds || [])) {
+      const action = byId.get(id);
+      if (action && !result.some((a) => a.id === action.id)) result.push(action);
+      if (result.length >= maxCommonActions) break;
     }
-    return chosen.slice(0, maxCommonActions);
+    for (const pin of pinnedActions) {
+      if (result.some((a) => a.id === pin.id)) continue;
+      if (result.length < maxCommonActions) { result.push(pin); continue; }
+      let idx = -1;
+      for (let i = result.length - 1; i >= 0; i--) { if (!result[i].pinned) { idx = i; break; } }
+      if (idx >= 0) result[idx] = pin;
+    }
+    return result;
   })();
 
   return { handleSaveAction, commonActions };

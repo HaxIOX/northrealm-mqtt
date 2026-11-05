@@ -1,6 +1,8 @@
 import { useAppData } from '../../contexts/AppDataContext.jsx';
 import { useMqtt } from '../../contexts/MqttContext.jsx';
+import { getPrefillVars } from './quickActionUtils.jsx';
 import {
+  extractTemplateVars,
   isTemplateAction,
   parseTopicList,
   resolveTemplate,
@@ -120,14 +122,19 @@ export function useQuickActionRunner() {
   };
 
   const loadActionIntoPublishForm = (action) => {
+    recordRecentAction(action.id);
     if (isTemplateAction(action)) {
+      const vars = getPrefillVars(action, extractTemplateVars(`${action.topic || ''}${action.payload || ''}`));
+      const hasEmpty = Object.values(vars).some((v) => !v);
       const cursorPos = (action.topic || '').search(/\{\{\w+\}\}/);
-      setPubTopic(resolveTemplate(action.topic, {}));
-      setPubMessage(resolveTemplate(action.payload, {}));
+      setPubTopic(resolveTemplate(action.topic, vars));
+      setPubMessage(resolveTemplate(action.payload, vars));
       setPubQoS(action.qos);
       setPubRetain(action.retain);
-      setPubTopicCursorPos(cursorPos >= 0 ? cursorPos : 0);
-      setPubTopicFocusTrigger((count) => count + 1);
+      if (hasEmpty) {
+        setPubTopicCursorPos(cursorPos >= 0 ? cursorPos : 0);
+        setPubTopicFocusTrigger((count) => count + 1);
+      }
       return;
     }
 
