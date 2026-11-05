@@ -2,16 +2,16 @@
 
 ## Unreleased
 
-## 0.1.16
+## 0.1.15
 
 - Merge: Windows desktop and Android now live on a single code line; one tag produces the installer, portable zip and signed APK
-- Desktop: restore the 0.1.15 Windows look on top of the componentized code (blue accent, narrow sidebar, local Inter / JetBrains Mono fonts); mobile layout and theme unchanged
+- Desktop: keep the earlier Windows-only look on top of the componentized code (blue accent, narrow sidebar, local Inter / JetBrains Mono fonts); mobile layout and theme unchanged
 - Desktop: "订阅主题" with a pinned New Topic, self-drawn config picker, no message counters, All/RX/TX filter, countdown for scheduled publish, `Ctrl/Cmd+P` quick actions
 - Desktop: default window 985x700, minimum 985x650
 - Remove: Firebase cloud sync (never enabled in builds); the backup / import dialog stays on mobile and desktop
 - Build: add `timerNextSendAt` to the publish workspace; share saved-config and common-action logic between mobile and desktop
 
-## Earlier changes (unreleased before 0.1.16)
+## Earlier changes (unreleased before 0.1.15)
 
 - Refactor: extract monolithic App.jsx into modular components and contexts (ThemeContext, MqttContext, AppDataContext, Sidebar, LogArea, PublishBar, ConnectionPanel, etc.)
 - Feature: template quick actions — use `{{varName}}` placeholders in topic/payload, fill form at send time with history autocomplete

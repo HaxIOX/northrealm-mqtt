@@ -2,7 +2,7 @@ name: Release
 
 # One tag -> one Release carrying the Windows installer, the Windows portable zip and the signed Android APK.
 #
-#   git tag v0.1.16 && git push origin v0.1.16
+#   git tag v0.1.15 && git push origin v0.1.15
 #
 # Manual runs (workflow_dispatch) are a rehearsal: everything is built and uploaded as workflow
 # artifacts, but no GitHub Release is created.

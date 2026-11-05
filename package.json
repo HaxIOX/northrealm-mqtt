@@ -1,7 +1,7 @@
 {
   "name": "northrealm-mqtt",
   "private": true,
-  "version": "0.1.16",
+  "version": "0.1.15",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
