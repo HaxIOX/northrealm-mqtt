@@ -26,6 +26,21 @@ Northrealm is an MQTT debugger and client for IoT development and testing. It pr
 - Local backup import/export
 - Desktop TCP/TLS MQTT support through Electron preload
 
+## Keyboard shortcuts
+
+Desktop / web with a keyboard. On macOS use `Cmd` instead of `Ctrl`.
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+K` | Connect; disconnect when connected, connecting or reconnecting |
+| `Ctrl+D` | Disconnect (only when connected) |
+| `Ctrl+Enter` | Publish the current message |
+| `Ctrl+P` | Open the quick actions panel |
+| `Ctrl+L` | Clear logs and counters |
+| `Esc` | Close the topmost panel (event center, quick actions, multicast) or popup |
+| `Enter` | Subscribe in the topic input; confirm in dialogs |
+| `Shift+Click` on a quick-action chip (desktop) | Fill the publish form without sending |
+
 ## Protocol support
 
 - MQTT protocol versions: `3.1`, `3.1.1`, `5.0`
