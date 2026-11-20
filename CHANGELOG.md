@@ -5,6 +5,7 @@
 ## 0.1.16
 
 - Desktop: clicking a common quick action now fills the publish area; Shift+click sends (0.1.15 sent on click)
+- Theme: default to light instead of following the system theme; a manually chosen theme is kept
 - Quick actions: ▾ button on template variable inputs shows the full history
 - Quick actions: "fill to send area" prefills variables from the action's last values, then the variable's recent history; focuses Topic only when a variable is still empty
 - Quick actions: common actions sorted by recent use; pinned actions are kept visible (last slot)

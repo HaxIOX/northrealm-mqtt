@@ -125,26 +125,9 @@ function getIsDesktop() {
   return detectRuntime().isDesktopShell || !!window.matchMedia?.(DESKTOP_QUERY).matches;
 }
 
-function getSystemTheme() {
-  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches
-    ? 'light'
-    : 'dark';
-}
-
 export function ThemeProvider({ children }) {
-  const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem('mqtt_theme');
-    return saved === 'light' || saved === 'dark' ? saved : getSystemTheme();
-  });
-
-  useEffect(() => {
-    if (localStorage.getItem('mqtt_theme')) return undefined;
-    const media = window.matchMedia?.('(prefers-color-scheme: light)');
-    if (!media) return undefined;
-    const handleChange = () => setTheme(media.matches ? 'light' : 'dark');
-    media.addEventListener('change', handleChange);
-    return () => media.removeEventListener('change', handleChange);
-  }, []);
+  // 默认浅色；用户手动切换过则沿用保存的选择。不跟随系统主题。
+  const [theme, setTheme] = useState(() => (localStorage.getItem('mqtt_theme') === 'dark' ? 'dark' : 'light'));
 
   const [isDesktop, setIsDesktop] = useState(getIsDesktop);
 
