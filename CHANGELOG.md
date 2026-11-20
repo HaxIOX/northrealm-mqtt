@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.16
+
+- Desktop: clicking a common quick action now fills the publish area; Shift+click sends (0.1.15 sent on click)
+- Quick actions: ▾ button on template variable inputs shows the full history
+- Quick actions: "fill to send area" prefills variables from the action's last values, then the variable's recent history; focuses Topic only when a variable is still empty
+- Quick actions: common actions sorted by recent use; pinned actions are kept visible (last slot)
+- Docs: README lists keyboard shortcuts and the click / Shift+click behavior
+
 ## 0.1.15
 
 - Merge: Windows desktop and Android now live on a single code line; one tag produces the installer, portable zip and signed APK
